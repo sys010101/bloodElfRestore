@@ -1,0 +1,24 @@
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor settings
+.idea/
+.vscode/
+
+# Temporary / patch leftovers
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Release bundles
+*.zip
+
+# Log captures exported manually during testing
+*.log
+
+# Lua bytecode or tooling output if generated locally
+*.luac
