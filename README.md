@@ -109,55 +109,120 @@ The music system uses a similar approximation model:
 
 - `/belvr`
   Open the UI.
+
+General addon power:
 - `/belvr on`
+  Turns the addon on.
 - `/belvr off`
-- `/belvr mute on`
-- `/belvr mute off`
-- `/belvr verbose`
-- `/belvr verbose on`
-- `/belvr verbose off`
-- `/belvr fallback on`
-- `/belvr fallback off`
-- `/belvr target on`
-- `/belvr target off`
-- `/belvr invert`
-- `/belvr invert on`
-- `/belvr invert off`
-- `/belvr suppress`
-- `/belvr suppress on`
-- `/belvr suppress off`
-- `/belvr force male`
-- `/belvr force female`
-- `/belvr force clear`
-- `/belvr force-name male`
-- `/belvr force-name female`
-- `/belvr force-name clear`
-- `/belvr role military`
-- `/belvr role noble`
-- `/belvr role standard`
-- `/belvr role clear`
-- `/belvr role-name military`
-- `/belvr role-name noble`
-- `/belvr role-name standard`
-- `/belvr role-name clear`
+  Turns the addon off and stops its replacement behavior.
 - `/belvr status`
+  Prints the addon's current settings and loaded counts in chat.
+
+Voice muting and voice debug:
+- `/belvr mute on`
+  Turns on muting for the tracked new Midnight Blood Elf voice lines.
+- `/belvr mute off`
+  Restores the tracked new Midnight Blood Elf voice lines.
+- `/belvr verbose`
+  Toggles detailed voice debug messages in chat.
+- `/belvr verbose on`
+  Forces detailed voice debug messages on.
+- `/belvr verbose off`
+  Forces detailed voice debug messages off.
+
+Voice detection and behavior:
+- `/belvr fallback on`
+  Allows the addon to use its backup humanoid check when Blizzard hides NPC race data.
+- `/belvr fallback off`
+  Disables that backup humanoid check.
+- `/belvr target on`
+  Plays a greet when you left-click and target a supported NPC.
+- `/belvr target off`
+  Disables left-click target greet playback.
+- `/belvr invert`
+  Toggles the male/female voice swap used when Blizzard reports NPC sex backwards.
+- `/belvr invert on`
+  Forces the male/female voice swap on.
+- `/belvr invert off`
+  Forces the male/female voice swap off.
+- `/belvr suppress`
+  Toggles temporary native dialog suppression during injected voice playback.
+- `/belvr suppress on`
+  Forces native dialog suppression on.
+- `/belvr suppress off`
+  Forces native dialog suppression off.
+
+Manual voice fixes for the NPC you are targeting:
+- `/belvr force male`
+  Forces the current target to use male voice playback.
+- `/belvr force female`
+  Forces the current target to use female voice playback.
+- `/belvr force clear`
+  Clears the exact-target gender override.
+- `/belvr role military`
+  Forces the current target into the military voice pool.
+- `/belvr role noble`
+  Forces the current target into the noble voice pool.
+- `/belvr role standard`
+  Forces the current target into the standard voice pool.
+- `/belvr role clear`
+  Clears the exact-target role override.
+
+Manual voice fixes for every NPC with the same visible name:
+- `/belvr force-name male`
+  Forces all NPCs with the current target's name to use male voice playback.
+- `/belvr force-name female`
+  Forces all NPCs with the current target's name to use female voice playback.
+- `/belvr force-name clear`
+  Clears the name-wide gender override.
+- `/belvr role-name military`
+  Forces all NPCs with the current target's name into the military voice pool.
+- `/belvr role-name noble`
+  Forces all NPCs with the current target's name into the noble voice pool.
+- `/belvr role-name standard`
+  Forces all NPCs with the current target's name into the standard voice pool.
+- `/belvr role-name clear`
+  Clears the name-wide role override.
+
+Music controls:
 - `/belvr music on`
+  Turns the music replacement system on.
 - `/belvr music off`
+  Turns the music replacement system off.
 - `/belvr music mute on`
+  Mutes the tracked Midnight music IDs used by the music replacement layer.
 - `/belvr music mute off`
+  Restores the tracked Midnight music IDs.
 - `/belvr music verbose`
+  Toggles detailed music routing messages in chat.
 - `/belvr music verbose on`
+  Forces detailed music routing messages on.
 - `/belvr music verbose off`
-- `/belvr music trace on`
-- `/belvr music trace off`
-- `/belvr music trace clear`
+  Forces detailed music routing messages off.
 - `/belvr music intro on`
+  Makes the addon play the intro music cue when entering the supported music region.
 - `/belvr music intro off`
+  Disables that intro-on-entry cue.
 - `/belvr music now`
+  Forces the addon to re-check your current area and refresh music logic immediately.
 - `/belvr music stop`
+  Stops the currently injected addon music and clears the music state.
+
+Music trace recording:
+- `/belvr music trace on`
+  Starts recording music routing and playback lines into SavedVariables for later review.
+- `/belvr music trace off`
+  Stops recording the music trace.
+- `/belvr music trace clear`
+  Clears the saved music trace buffer.
+
+Music test playback:
 - `/belvr test music intro`
+  Plays the configured intro music track for testing.
 - `/belvr test music day`
+  Plays one of the configured daytime music tracks for testing.
 - `/belvr test music night`
+  Plays one of the configured nighttime music tracks for testing.
 
 ## UI Controls
 
