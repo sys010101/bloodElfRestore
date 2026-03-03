@@ -61,7 +61,9 @@ local BLOOD_ELF_FALLBACK_ZONES = {
 local MUSIC_UPDATE_INTERVAL = 1.0
 local MUSIC_TRACK_ROTATE_SECONDS = 85
 local MUSIC_REPEAT_COOLDOWN = 180
+local MUSIC_INTRO_REPEAT_COOLDOWN = 600
 local MUSIC_TRANSITION_FADE_MS = 900
+local MUSIC_END_GRACE_SECONDS = 0.5
 local MUSIC_DAY_START_HOUR = 6
 local MUSIC_NIGHT_START_HOUR = 18
 local BLOOD_ELF_MUSIC_ZONES = {
@@ -83,6 +85,40 @@ local BLOOD_ELF_MUSIC_ZONES = {
 --   make TBC music bleed into places you do not want.
 local BLOOD_ELF_MUSIC_SUBZONES = {
     ["the bazaar"] = true,
+}
+
+-- Broad music families. These are what the actual playback logic
+-- should react to. Fine-grained subzones are still logged for
+-- mapping, but they should not constantly restart the same track
+-- while you move around inside one logical music region.
+local MUSIC_REGION_SILVERMOON = "silvermoon"
+local MUSIC_REGION_EVERSONG = "eversong"
+local MUSIC_REGION_SUNSTRIDER = "sunstrider"
+local MUSIC_REGION_GHOSTLANDS = "ghostlands"
+
+-- Some Midnight-era subzones still logically belong to a different
+-- music family than the broad top-level zone name suggests.
+-- This lets the addon route them into a different regional pool.
+--
+-- SAFE TO CHANGE:
+-- - Add lowercase subzone names here as you confirm they should
+--   borrow a different regional music family.
+local MUSIC_SUBZONE_REGION_OVERRIDES = {
+    ["amani pass"] = MUSIC_REGION_GHOSTLANDS,
+    ["daggerspine landing"] = MUSIC_REGION_GHOSTLANDS,
+    ["daggerspine point"] = MUSIC_REGION_GHOSTLANDS,
+    ["farstrider enclave"] = MUSIC_REGION_GHOSTLANDS,
+    ["goldenmist village"] = MUSIC_REGION_GHOSTLANDS,
+    ["ruins of deatholme"] = MUSIC_REGION_GHOSTLANDS,
+    ["tranquillien"] = MUSIC_REGION_GHOSTLANDS,
+    ["sanctum of the moon"] = MUSIC_REGION_GHOSTLANDS,
+    ["sunstrider isle"] = MUSIC_REGION_SUNSTRIDER,
+    ["suncrown village"] = MUSIC_REGION_GHOSTLANDS,
+    ["thalassian pass"] = MUSIC_REGION_GHOSTLANDS,
+    ["windrunner spire"] = MUSIC_REGION_GHOSTLANDS,
+    ["windrunner village"] = MUSIC_REGION_GHOSTLANDS,
+    ["zeb'nowa"] = MUSIC_REGION_GHOSTLANDS,
+    ["zeb'tela ruins"] = MUSIC_REGION_GHOSTLANDS,
 }
 
 
@@ -136,7 +172,10 @@ local state = {
     musicCurrentTrackID = nil,
     musicCurrentPool = nil,
     musicCurrentAreaKey = nil,
+    musicCurrentRegionKey = nil,
     musicLastTrackStartedAt = 0,
+    musicExpectedEndTime = 0,
+    musicLastGlobalMusicEnabled = nil,
     musicLastContextSignature = nil,
     musicLastZoneName = nil,
     musicLastSubZoneName = nil,
@@ -145,12 +184,19 @@ local state = {
     musicLastNight = nil,
     musicWasInSupportedZone = false,
     musicTrackCooldowns = {},
+    musicIntroCooldowns = {},
     musicUpdateAccumulator = 0,
     musicIntroPending = false,
+    musicManualStop = false,
 }
 
 local ui = {
     panel = nil,
+    voiceTabButton = nil,
+    musicTabButton = nil,
+    voiceSection = nil,
+    musicSection = nil,
+    activeTab = "voice",
     statusText = nil,
     enabledCheckbox = nil,
     muteCheckbox = nil,
@@ -377,12 +423,23 @@ local function GetMusicStats()
     local dayCount = BElfVR_TBCMusic and CountEntries(BElfVR_TBCMusic.day) or 0
     local nightCount = BElfVR_TBCMusic and CountEntries(BElfVR_TBCMusic.night) or 0
     local mutedCount = CountEntries(BElfVR_NewMusicIDs)
+    local regionalCount = 0
+
+    if BElfVR_TBCMusicRegions then
+        for _, regionData in pairs(BElfVR_TBCMusicRegions) do
+            regionalCount = regionalCount +
+                CountEntries(regionData and regionData.intro) +
+                CountEntries(regionData and regionData.day) +
+                CountEntries(regionData and regionData.night)
+        end
+    end
 
     return {
         introCount = introCount,
         dayCount = dayCount,
         nightCount = nightCount,
         mutedCount = mutedCount,
+        regionalCount = regionalCount,
     }
 end
 
@@ -406,6 +463,42 @@ local function IsNightTimeForMusic()
     return hour < MUSIC_DAY_START_HOUR or hour >= MUSIC_NIGHT_START_HOUR
 end
 
+-- Region-aware pool lookup.
+-- The addon first tries the explicit per-region override table, then
+-- falls back to the legacy global Silvermoon table so empty buckets
+-- still behave sensibly while mapping is in progress.
+local function GetMusicTrackPool(regionKey, poolName)
+    local regionData = BElfVR_TBCMusicRegions and regionKey and BElfVR_TBCMusicRegions[regionKey]
+    local regionPool = regionData and regionData[poolName]
+    if regionPool and #regionPool > 0 then
+        return regionPool, regionKey
+    end
+
+    local legacyPool = BElfVR_TBCMusic and BElfVR_TBCMusic[poolName]
+    if legacyPool and #legacyPool > 0 then
+        return legacyPool, MUSIC_REGION_SILVERMOON
+    end
+
+    return nil, nil
+end
+
+local function ShouldQueueMusicIntro(regionKey)
+    if not (BElfVRDB and BElfVRDB.musicUseIntro and regionKey) then
+        return false
+    end
+
+    local now = GetTime()
+    local lastIntroAt = state.musicIntroCooldowns and state.musicIntroCooldowns[regionKey]
+    if lastIntroAt and (now - lastIntroAt) < MUSIC_INTRO_REPEAT_COOLDOWN then
+        local remaining = math.ceil(MUSIC_INTRO_REPEAT_COOLDOWN - (now - lastIntroAt))
+        LogMusic("Skipping intro for region " .. regionKey .. " because intro cooldown is still active (" .. remaining .. "s left).")
+        RecordMusicTrace("Skipped intro for region=" .. regionKey .. " cooldownRemaining=" .. tostring(remaining))
+        return false
+    end
+
+    return true
+end
+
 -- Builds a compact context snapshot from the player's current
 -- position. This is what the addon can reliably inspect through
 -- addon Lua. Blizzard's internal music resolver still has more
@@ -421,6 +514,19 @@ local function GetMusicContext()
     local isResting = IsResting() and true or false
     local isNight = IsNightTimeForMusic()
     local isIndoor = (subZoneKey ~= "" and subZoneKey ~= zoneKey)
+    local regionKey = MUSIC_SUBZONE_REGION_OVERRIDES[subZoneKey]
+
+    if regionKey then
+        -- Explicit subzone override wins.
+    elseif zoneKey == "eversong woods" then
+        regionKey = MUSIC_REGION_EVERSONG
+    elseif zoneKey == "silvermoon city" or zoneKey == "sanctum of light" then
+        regionKey = MUSIC_REGION_SILVERMOON
+    elseif supportedBySubZone then
+        regionKey = MUSIC_REGION_SILVERMOON
+    elseif supported and supportedByZone then
+        regionKey = zoneKey
+    end
 
     return {
         zoneName = zoneName,
@@ -433,7 +539,12 @@ local function GetMusicContext()
         isResting = isResting,
         isNight = isNight,
         isIndoor = isIndoor,
-        areaKey = zoneKey .. "||" .. subZoneKey .. "||" .. (isResting and "rest" or "roam") .. "||" .. (isNight and "night" or "day"),
+        regionKey = regionKey,
+        -- This is the stable playback routing key.
+        -- DO NOT casually replace this with subzone or resting-state
+        -- data again, or the addon will start hard-restarting music
+        -- every few steps across tiny Silvermoon boundaries.
+        areaKey = tostring(regionKey or zoneKey) .. "||" .. (isNight and "night" or "day"),
     }
 end
 
@@ -445,6 +556,7 @@ local function StopInjectedMusic(fadeOutMS)
     state.musicCurrentTrackID = nil
     state.musicCurrentPool = nil
     state.musicLastTrackStartedAt = 0
+    state.musicExpectedEndTime = 0
 end
 
 local function ResetMusicState(stopPlayback)
@@ -453,6 +565,7 @@ local function ResetMusicState(stopPlayback)
     end
 
     state.musicCurrentAreaKey = nil
+    state.musicCurrentRegionKey = nil
     state.musicLastContextSignature = nil
     state.musicLastZoneName = nil
     state.musicLastSubZoneName = nil
@@ -463,6 +576,64 @@ local function ResetMusicState(stopPlayback)
     state.musicTrackCooldowns = {}
     state.musicUpdateAccumulator = 0
     state.musicIntroPending = false
+    state.musicLastGlobalMusicEnabled = nil
+end
+
+-- If the track should already be over based on its known duration,
+-- clear the stale handle state so the scheduler can queue the next
+-- song immediately instead of waiting for the coarse rotation timer.
+local function RefreshMusicPlaybackLifetime()
+    if not state.musicHandle or state.musicExpectedEndTime <= 0 then
+        return
+    end
+
+    local now = GetTime()
+    if now < (state.musicExpectedEndTime + MUSIC_END_GRACE_SECONDS) then
+        return
+    end
+
+    LogMusic("Current music track appears finished; clearing stale playback state so the next track can start.")
+    RecordMusicTrace("Detected completed track; clearing stale playback state.")
+
+    state.musicHandle = nil
+    state.musicCurrentTrackID = nil
+    state.musicCurrentPool = nil
+    state.musicLastTrackStartedAt = 0
+    state.musicExpectedEndTime = 0
+end
+
+-- Detects live changes to WoW's own music toggle (for example Ctrl+M)
+-- so the addon behaves like native music: fade out when disabled,
+-- resume with a fresh track when re-enabled.
+local function HandleGlobalMusicToggle()
+    if not BElfVRDB then
+        return false
+    end
+
+    local isEnabled = IsGlobalMusicEnabled()
+    if state.musicLastGlobalMusicEnabled == nil then
+        state.musicLastGlobalMusicEnabled = isEnabled
+        return false
+    end
+
+    if isEnabled == state.musicLastGlobalMusicEnabled then
+        return false
+    end
+
+    state.musicLastGlobalMusicEnabled = isEnabled
+
+    if not isEnabled then
+        if state.musicHandle then
+            LogMusic("WoW music output was disabled; fading out injected music.")
+            RecordMusicTrace("Detected global music disable; fading out injected music.")
+            StopInjectedMusic(MUSIC_TRANSITION_FADE_MS)
+        end
+        return true
+    end
+
+    LogMusic("WoW music output was re-enabled; the addon will resume with a fresh track.")
+    RecordMusicTrace("Detected global music enable; scheduling fresh music playback.")
+    return true
 end
 
 -- Picks a track from the provided pool while strongly avoiding
@@ -538,6 +709,7 @@ local function PlayMusicTrack(fileDataID, poolName, reason)
     state.musicCurrentTrackID = fileDataID
     state.musicCurrentPool = poolName
     state.musicLastTrackStartedAt = GetTime()
+    state.musicExpectedEndTime = state.musicLastTrackStartedAt + ((BElfVR_TBCMusicDurations and BElfVR_TBCMusicDurations[fileDataID]) or MUSIC_TRACK_ROTATE_SECONDS)
 
     LogMusic("Playing " .. tostring(poolName or "?") .. " music track ID " .. fileDataID ..
         " (" .. tostring(reason or "unspecified") .. ")")
@@ -550,8 +722,18 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         return
     end
 
+    local globalMusicToggleChanged = HandleGlobalMusicToggle()
+    RefreshMusicPlaybackLifetime()
+
     local context = GetMusicContext()
     local contextSignature = context.areaKey
+
+    if not IsGlobalMusicEnabled() then
+        state.musicCurrentAreaKey = context.areaKey
+        state.musicCurrentRegionKey = context.regionKey
+        state.musicLastContextSignature = contextSignature
+        return
+    end
 
     if context.zoneName ~= state.musicLastZoneName or
        context.subZoneName ~= state.musicLastSubZoneName or
@@ -561,6 +743,7 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         LogMusic("Context change [" .. tostring(reason or "update") .. "]: zone=" ..
             tostring(context.zoneName ~= "" and context.zoneName or "<none>") ..
             " subzone=" .. tostring(context.subZoneName ~= "" and context.subZoneName or "<none>") ..
+            " region=" .. tostring(context.regionKey or "<none>") ..
             " supported(zone)=" .. tostring(context.supportedByZone) ..
             " supported(subzone)=" .. tostring(context.supportedBySubZone) ..
             " resting=" .. tostring(context.isResting) ..
@@ -569,6 +752,7 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         RecordMusicTrace("Context reason=" .. tostring(reason or "update") ..
             " zone=" .. tostring(context.zoneName ~= "" and context.zoneName or "<none>") ..
             " subzone=" .. tostring(context.subZoneName ~= "" and context.subZoneName or "<none>") ..
+            " region=" .. tostring(context.regionKey or "<none>") ..
             " supportedZone=" .. tostring(context.supportedByZone) ..
             " supportedSubZone=" .. tostring(context.supportedBySubZone) ..
             " resting=" .. tostring(context.isResting) ..
@@ -589,6 +773,7 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         end
         state.musicWasInSupportedZone = false
         state.musicCurrentAreaKey = nil
+        state.musicCurrentRegionKey = nil
         state.musicLastContextSignature = contextSignature
         state.musicIntroPending = false
         if state.musicHandle then
@@ -606,6 +791,7 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
             StopInjectedMusic(MUSIC_TRANSITION_FADE_MS)
         end
         state.musicCurrentAreaKey = context.areaKey
+        state.musicCurrentRegionKey = context.regionKey
         state.musicLastContextSignature = contextSignature
         state.musicIntroPending = false
         return
@@ -613,42 +799,68 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
 
     local enteringSupportedZone = (state.musicLastContextSignature ~= nil and state.musicCurrentAreaKey == nil)
         or (not state.musicCurrentAreaKey)
-
     local areaChanged = state.musicCurrentAreaKey ~= context.areaKey
-    local timeToRotate = state.musicLastTrackStartedAt > 0 and ((GetTime() - state.musicLastTrackStartedAt) >= MUSIC_TRACK_ROTATE_SECONDS)
+    local regionChanged = state.musicCurrentRegionKey ~= context.regionKey
+    -- Fallback-only rotation:
+    -- If a track has a known duration, let it finish naturally.
+    -- The old fixed timer caused long songs (especially intros) to be
+    -- cut off abruptly before their natural end.
+    local timeToRotate = state.musicLastTrackStartedAt > 0 and
+        state.musicExpectedEndTime <= 0 and
+        ((GetTime() - state.musicLastTrackStartedAt) >= MUSIC_TRACK_ROTATE_SECONDS)
 
-    if areaChanged and not state.musicCurrentAreaKey then
-        state.musicIntroPending = BElfVRDB.musicUseIntro and true or false
-    elseif enteringSupportedZone then
-        state.musicIntroPending = BElfVRDB.musicUseIntro and true or false
+    if enteringSupportedZone or regionChanged then
+        state.musicIntroPending = ShouldQueueMusicIntro(context.regionKey)
     end
 
-    if not (forceTrackRefresh or areaChanged or timeToRotate or not state.musicHandle) then
+    if state.musicManualStop then
+        if forceTrackRefresh or globalMusicToggleChanged or areaChanged then
+            state.musicManualStop = false
+        else
+            state.musicCurrentAreaKey = context.areaKey
+            state.musicCurrentRegionKey = context.regionKey
+            state.musicLastContextSignature = contextSignature
+            return
+        end
+    end
+
+    if not (forceTrackRefresh or globalMusicToggleChanged or areaChanged or timeToRotate or not state.musicHandle) then
         state.musicLastContextSignature = contextSignature
         return
     end
 
     local poolName
     local trackPool
+    local resolvedRegionKey = context.regionKey
 
-    if state.musicIntroPending and BElfVR_TBCMusic and BElfVR_TBCMusic.intro and #BElfVR_TBCMusic.intro > 0 then
+    if state.musicIntroPending then
         poolName = "intro"
-        trackPool = BElfVR_TBCMusic.intro
+        trackPool, resolvedRegionKey = GetMusicTrackPool(context.regionKey, "intro")
         state.musicIntroPending = false
+        if trackPool and context.regionKey then
+            state.musicIntroCooldowns[context.regionKey] = GetTime()
+        end
     else
         poolName = context.isNight and "night" or "day"
-        trackPool = BElfVR_TBCMusic and BElfVR_TBCMusic[poolName]
+        trackPool, resolvedRegionKey = GetMusicTrackPool(context.regionKey, poolName)
     end
 
     local nextTrack = ChooseMusicTrack(poolName, trackPool)
     if nextTrack then
-        PlayMusicTrack(nextTrack, poolName, reason or (areaChanged and "area change" or "rotation"))
+        local resolvedPoolName = poolName
+        if resolvedRegionKey and resolvedRegionKey ~= context.regionKey then
+            resolvedPoolName = tostring(context.regionKey or "?") .. "->" .. tostring(resolvedRegionKey) .. ":" .. poolName
+        elseif resolvedRegionKey then
+            resolvedPoolName = tostring(resolvedRegionKey) .. ":" .. poolName
+        end
+        PlayMusicTrack(nextTrack, resolvedPoolName, reason or (areaChanged and "area change" or "rotation"))
     else
         LogMusic("No replacement music tracks are configured for pool " .. tostring(poolName or "?"))
         RecordMusicTrace("No tracks configured for pool=" .. tostring(poolName or "?"))
     end
 
     state.musicCurrentAreaKey = context.areaKey
+    state.musicCurrentRegionKey = context.regionKey
     state.musicLastContextSignature = contextSignature
 end
 
@@ -1257,6 +1469,7 @@ local function RefreshUI()
             "    Trace lines stored: " .. traceCount ..
             "\nMuted Midnight music IDs: " .. musicStats.mutedCount ..
             "\nTBC music pools: " .. musicStats.introCount .. " intro / " .. musicStats.dayCount .. " day / " .. musicStats.nightCount .. " night" ..
+            "\nRegional override IDs loaded: " .. musicStats.regionalCount ..
             "\nCurrent injected track: " .. currentTrack .. " (" .. currentPool .. ")" ..
             "\nBehavior: replacement music runs only while tracked Midnight music muting is active."
         )
@@ -1504,13 +1717,42 @@ local function CreateActionButton(parent, width, height, label, xOffset, yOffset
     return button
 end
 
+local function CreateSectionFrame(parent)
+    local section = CreateFrame("Frame", nil, parent)
+    section:SetPoint("TOPLEFT", parent, "TOPLEFT", 12, -96)
+    section:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -12, 12)
+    return section
+end
+
+local function SetSettingsTab(tabKey)
+    if not ui.panel then
+        return
+    end
+
+    ui.activeTab = tabKey
+
+    if ui.voiceSection then
+        ui.voiceSection:SetShown(tabKey == "voice")
+    end
+    if ui.musicSection then
+        ui.musicSection:SetShown(tabKey == "music")
+    end
+
+    if ui.voiceTabButton then
+        ui.voiceTabButton:SetEnabled(tabKey ~= "voice")
+    end
+    if ui.musicTabButton then
+        ui.musicTabButton:SetEnabled(tabKey ~= "music")
+    end
+end
+
 local function CreateSettingsUI()
     if ui.panel then
         return ui.panel
     end
 
     local panel = CreateFrame("Frame", "BElfVoiceRestoreUI", UIParent, "BasicFrameTemplateWithInset")
-    panel:SetSize(470, 1040)
+    panel:SetSize(470, 760)
     panel:SetPoint("CENTER")
     panel:SetClampedToScreen(true)
     panel:SetMovable(true)
@@ -1529,208 +1771,129 @@ local function CreateSettingsUI()
     subtitle:SetJustifyH("LEFT")
     subtitle:SetText("Controls for restoring TBC Blood Elf voices and first-pass Silvermoon / Eversong music replacement.")
 
-    ui.enabledCheckbox = CreateCheckbox(panel, 14, -72, "Enable addon logic",
+    ui.voiceTabButton = CreateActionButton(panel, 92, 22, "Voice", 16, -60, function()
+        SetSettingsTab("voice")
+    end)
+    ui.musicTabButton = CreateActionButton(panel, 92, 22, "Music", 114, -60, function()
+        SetSettingsTab("music")
+    end)
+
+    local voiceSection = CreateSectionFrame(panel)
+    local musicSection = CreateSectionFrame(panel)
+    ui.voiceSection = voiceSection
+    ui.musicSection = musicSection
+
+    ui.enabledCheckbox = CreateCheckbox(voiceSection, 2, -8, "Enable addon logic",
         "Turns the addon on or off. If this is off, the addon will not replace NPC voices or apply mutes.",
         function(self)
         SetAddonEnabled(self:GetChecked())
     end)
 
-    ui.muteCheckbox = CreateCheckbox(panel, 14, -100, "Mute new Midnight Blood Elf voice files",
+    ui.muteCheckbox = CreateCheckbox(voiceSection, 2, -36, "Mute new Midnight Blood Elf voice files",
         "Silences the tracked new Midnight Blood Elf voices so you hear the addon's replacement voices instead.",
         function(self)
         SetMuteEnabled(self:GetChecked())
     end)
 
-    ui.verboseCheckbox = CreateCheckbox(panel, 14, -128, "Verbose chat debug",
+    ui.verboseCheckbox = CreateCheckbox(voiceSection, 2, -64, "Verbose chat debug",
         "Shows detailed debug lines in chat. Turn this off for normal play.",
         function(self)
         SetVerboseEnabled(self:GetChecked())
     end)
 
-    ui.fallbackCheckbox = CreateCheckbox(panel, 14, -156, "Fallback: allow humanoid gossip NPCs if race is hidden",
+    ui.fallbackCheckbox = CreateCheckbox(voiceSection, 2, -92, "Fallback: allow humanoid gossip NPCs if race is hidden",
         "If the game hides an NPC's race, the addon can still treat nearby humanoid NPCs as valid Blood Elf candidates.",
         function(self)
         SetFallbackEnabled(self:GetChecked())
     end)
 
-    ui.targetCheckbox = CreateCheckbox(panel, 14, -184, "Play greet on left-click target selection",
+    ui.targetCheckbox = CreateCheckbox(voiceSection, 2, -120, "Play greet on left-click target selection",
         "Plays a greeting when you left-click and target a supported NPC, even before opening gossip.",
         function(self)
         SetPlayOnTargetEnabled(self:GetChecked())
     end)
 
-    ui.invertSexCheckbox = CreateCheckbox(panel, 14, -212, "Invert NPC sex mapping (swap male/female VO)",
+    ui.invertSexCheckbox = CreateCheckbox(voiceSection, 2, -148, "Invert NPC sex mapping (swap male/female VO)",
         "Swaps male and female voice selection. Use this if the game reports an NPC's sex backwards.",
         function(self)
         SetInvertSexEnabled(self:GetChecked())
     end)
 
-    ui.suppressDialogCheckbox = CreateCheckbox(panel, 14, -240, "Suppress native dialog during injected playback",
+    ui.suppressDialogCheckbox = CreateCheckbox(voiceSection, 2, -176, "Suppress native dialog during injected playback",
         "Temporarily blocks the game's normal NPC dialog for a moment while the addon plays a replacement line. This can stop double-talk on stubborn NPCs.",
         function(self)
         SetSuppressNativeDialogEnabled(self:GetChecked())
     end)
 
-    local statusTitle = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    statusTitle:SetPoint("TOPLEFT", 18, -276)
+    local statusTitle = voiceSection:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    statusTitle:SetPoint("TOPLEFT", 6, -214)
     statusTitle:SetText("Status")
 
-    ui.statusText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    ui.statusText = voiceSection:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     ui.statusText:SetPoint("TOPLEFT", statusTitle, "BOTTOMLEFT", 0, -10)
     ui.statusText:SetWidth(430)
     ui.statusText:SetJustifyH("LEFT")
     ui.statusText:SetJustifyV("TOP")
 
-    local musicTitle = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    musicTitle:SetPoint("TOPLEFT", 18, -398)
-    musicTitle:SetText("Music")
-
-    ui.musicEnabledCheckbox = CreateCheckbox(panel, 14, -422, "Enable replacement music logic",
-        "Turns the addon's music system on or off. This does not affect the voice system.",
-        function(self)
-        SetMusicEnabled(self:GetChecked())
-    end)
-
-    ui.musicMuteCheckbox = CreateCheckbox(panel, 14, -450, "Mute tracked Midnight Silvermoon music files",
-        "Silences the currently tracked Midnight Silvermoon / Eversong music IDs so the addon's TBC music can replace them.",
-        function(self)
-        SetMusicMuteEnabled(self:GetChecked())
-    end)
-
-    ui.musicVerboseCheckbox = CreateCheckbox(panel, 14, -478, "Verbose music debug",
-        "Shows zone, subzone, resting, and day/night routing in chat so you can map where Blizzard swaps music.",
-        function(self)
-        SetMusicVerboseEnabled(self:GetChecked())
-    end)
-
-    ui.musicTraceCheckbox = CreateCheckbox(panel, 14, -506, "Record music trace to SavedVariables",
-        "Records music context and playback lines into the addon's SavedVariables data. Use /reload or log out before reading the saved file from disk.",
-        function(self)
-        SetMusicTraceEnabled(self:GetChecked())
-    end)
-
-    ui.musicIntroCheckbox = CreateCheckbox(panel, 14, -534, "Play intro cue on fresh entry",
-        "When you enter Silvermoon City or Eversong Woods from outside the supported region, the addon can play the intro music before rotating into day or night tracks.",
-        function(self)
-        SetMusicUseIntroEnabled(self:GetChecked())
-    end)
-
-    local musicStatusTitle = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    musicStatusTitle:SetPoint("TOPLEFT", 18, -570)
-    musicStatusTitle:SetText("Music Status")
-
-    ui.musicStatusText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    ui.musicStatusText:SetPoint("TOPLEFT", musicStatusTitle, "BOTTOMLEFT", 0, -10)
-    ui.musicStatusText:SetWidth(430)
-    ui.musicStatusText:SetJustifyH("LEFT")
-    ui.musicStatusText:SetJustifyV("TOP")
-
-    CreateActionButton(panel, 140, 24, "Test Intro", 18, -670, function()
-        local trackID = BElfVR_TBCMusic and BElfVR_TBCMusic.intro and BElfVR_TBCMusic.intro[1]
-        if trackID then
-            PlayMusicTrack(trackID, "intro", "manual test")
-            RefreshUI()
-        end
-    end)
-    CreateActionButton(panel, 140, 24, "Test Day", 164, -670, function()
-        local trackID = ChooseMusicTrack("day", BElfVR_TBCMusic and BElfVR_TBCMusic.day)
-        if trackID then
-            PlayMusicTrack(trackID, "day", "manual test")
-            RefreshUI()
-        end
-    end)
-    CreateActionButton(panel, 140, 24, "Test Night", 310, -670, function()
-        local trackID = ChooseMusicTrack("night", BElfVR_TBCMusic and BElfVR_TBCMusic.night)
-        if trackID then
-            PlayMusicTrack(trackID, "night", "manual test")
-            RefreshUI()
-        end
-    end)
-    CreateActionButton(panel, 212, 24, "Re-apply Music Mutes", 18, -702, function()
-        SetMusicMuteEnabled(true)
-        if BElfVRDB.enabled and BElfVRDB.musicEnabled then
-            print("|cff7FD4FF[BElfVR Music]|r Music mutes enabled and reapplied.")
-        else
-            print("|cff7FD4FF[BElfVR Music]|r Music mute option enabled. Mutes will apply when music logic is active.")
-        end
-    end)
-    CreateActionButton(panel, 212, 24, "Clear Music Trace", 246, -702, function()
-        BElfVRDB.musicTraceLog = {}
-        if BElfVRDB.musicTraceEnabled then
-            RecordMusicTrace("Trace log cleared.")
-        end
-        RefreshUI()
-        print("|cff7FD4FF[BElfVR Music]|r Cleared the recorded music trace buffer.")
-    end)
-    CreateActionButton(panel, 212, 24, "Restore Midnight Music", 18, -734, function()
-        SetMusicMuteEnabled(false)
-        print("|cff7FD4FF[BElfVR Music]|r Unmuted all tracked Midnight music IDs.")
-    end)
-    CreateActionButton(panel, 212, 24, "Force Music Refresh", 246, -734, function()
-        EvaluateMusicState("manual ui refresh", true)
-        RefreshUI()
-        print("|cff7FD4FF[BElfVR Music]|r Forced a music re-evaluation.")
-    end)
-
-    local testTitle = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    testTitle:SetPoint("TOPLEFT", 18, -790)
+    local testTitle = voiceSection:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    testTitle:SetPoint("TOPLEFT", 6, -336)
     testTitle:SetText("Test Playback")
 
-    CreateActionButton(panel, 140, 24, "M Noble Greet", 18, -814, function()
+    CreateActionButton(voiceSection, 140, 24, "M Noble Greet", 6, -360, function()
         PlayRandomTBC("male", "greet", "noble")
     end)
-    CreateActionButton(panel, 140, 24, "M Noble Bye", 164, -814, function()
+    CreateActionButton(voiceSection, 140, 24, "M Noble Bye", 152, -360, function()
         PlayRandomTBC("male", "bye", "noble")
     end)
-    CreateActionButton(panel, 140, 24, "M Noble Pissed", 310, -814, function()
+    CreateActionButton(voiceSection, 140, 24, "M Noble Pissed", 298, -360, function()
         PlayRandomTBC("male", "pissed", "noble")
     end)
-    CreateActionButton(panel, 140, 24, "M Standard Greet", 18, -846, function()
+    CreateActionButton(voiceSection, 140, 24, "M Standard Greet", 6, -392, function()
         PlayRandomTBC("male", "greet", "standard")
     end)
-    CreateActionButton(panel, 140, 24, "M Standard Bye", 164, -846, function()
+    CreateActionButton(voiceSection, 140, 24, "M Standard Bye", 152, -392, function()
         PlayRandomTBC("male", "bye", "standard")
     end)
-    CreateActionButton(panel, 140, 24, "M Standard Pissed", 310, -846, function()
+    CreateActionButton(voiceSection, 140, 24, "M Standard Pissed", 298, -392, function()
         PlayRandomTBC("male", "pissed", "standard")
     end)
-    CreateActionButton(panel, 140, 24, "M Military Greet", 18, -878, function()
+    CreateActionButton(voiceSection, 140, 24, "M Military Greet", 6, -424, function()
         PlayRandomTBC("male", "greet", "military")
     end)
-    CreateActionButton(panel, 140, 24, "M Military Bye", 164, -878, function()
+    CreateActionButton(voiceSection, 140, 24, "M Military Bye", 152, -424, function()
         PlayRandomTBC("male", "bye", "military")
     end)
-    CreateActionButton(panel, 140, 24, "M Military Pissed", 310, -878, function()
+    CreateActionButton(voiceSection, 140, 24, "M Military Pissed", 298, -424, function()
         PlayRandomTBC("male", "pissed", "military")
     end)
-    CreateActionButton(panel, 140, 24, "F Noble Greet", 18, -910, function()
+    CreateActionButton(voiceSection, 140, 24, "F Noble Greet", 6, -456, function()
         PlayRandomTBC("female", "greet", "noble")
     end)
-    CreateActionButton(panel, 140, 24, "F Noble Bye", 164, -910, function()
+    CreateActionButton(voiceSection, 140, 24, "F Noble Bye", 152, -456, function()
         PlayRandomTBC("female", "bye", "noble")
     end)
-    CreateActionButton(panel, 140, 24, "F Noble Pissed", 310, -910, function()
+    CreateActionButton(voiceSection, 140, 24, "F Noble Pissed", 298, -456, function()
         PlayRandomTBC("female", "pissed", "noble")
     end)
-    CreateActionButton(panel, 140, 24, "F Standard Greet", 18, -942, function()
+    CreateActionButton(voiceSection, 140, 24, "F Standard Greet", 6, -488, function()
         PlayRandomTBC("female", "greet", "standard")
     end)
-    CreateActionButton(panel, 140, 24, "F Standard Bye", 164, -942, function()
+    CreateActionButton(voiceSection, 140, 24, "F Standard Bye", 152, -488, function()
         PlayRandomTBC("female", "bye", "standard")
     end)
-    CreateActionButton(panel, 140, 24, "F Standard Pissed", 310, -942, function()
+    CreateActionButton(voiceSection, 140, 24, "F Standard Pissed", 298, -488, function()
         PlayRandomTBC("female", "pissed", "standard")
     end)
-    CreateActionButton(panel, 140, 24, "F Military Greet", 18, -974, function()
+    CreateActionButton(voiceSection, 140, 24, "F Military Greet", 6, -520, function()
         PlayRandomTBC("female", "greet", "military")
     end)
-    CreateActionButton(panel, 140, 24, "F Military Bye", 164, -974, function()
+    CreateActionButton(voiceSection, 140, 24, "F Military Bye", 152, -520, function()
         PlayRandomTBC("female", "bye", "military")
     end)
-    CreateActionButton(panel, 140, 24, "F Military Pissed", 310, -974, function()
+    CreateActionButton(voiceSection, 140, 24, "F Military Pissed", 298, -520, function()
         PlayRandomTBC("female", "pissed", "military")
     end)
-    CreateActionButton(panel, 212, 24, "Re-apply Mutes", 18, -1006, function()
+    CreateActionButton(voiceSection, 212, 24, "Re-apply Mutes", 6, -560, function()
         SetMuteEnabled(true)
         if BElfVRDB.enabled then
             print("|cffFFD700[BElfVR]|r Mute option enabled and mutes applied.")
@@ -1738,12 +1901,107 @@ local function CreateSettingsUI()
             print("|cffFFD700[BElfVR]|r Mute option enabled. Mutes will apply when the addon is enabled.")
         end
     end)
-    CreateActionButton(panel, 212, 24, "Restore Midnight VO", 246, -1006, function()
+    CreateActionButton(voiceSection, 212, 24, "Restore Midnight VO", 224, -560, function()
         SetMuteEnabled(false)
         print("|cffFFD700[BElfVR]|r Unmuted all tracked new voice IDs.")
     end)
 
+    local musicTitle = musicSection:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    musicTitle:SetPoint("TOPLEFT", 6, -8)
+    musicTitle:SetText("Music")
+
+    ui.musicEnabledCheckbox = CreateCheckbox(musicSection, 2, -32, "Enable replacement music logic",
+        "Turns the addon's music system on or off. This does not affect the voice system.",
+        function(self)
+        SetMusicEnabled(self:GetChecked())
+    end)
+
+    ui.musicMuteCheckbox = CreateCheckbox(musicSection, 2, -60, "Mute tracked Midnight Silvermoon music files",
+        "Silences the currently tracked Midnight Silvermoon / Eversong music IDs so the addon's TBC music can replace them.",
+        function(self)
+        SetMusicMuteEnabled(self:GetChecked())
+    end)
+
+    ui.musicVerboseCheckbox = CreateCheckbox(musicSection, 2, -88, "Verbose music debug",
+        "Shows zone, subzone, resting, and day/night routing in chat so you can map where Blizzard swaps music.",
+        function(self)
+        SetMusicVerboseEnabled(self:GetChecked())
+    end)
+
+    ui.musicTraceCheckbox = CreateCheckbox(musicSection, 2, -116, "Record music trace to SavedVariables",
+        "Records music context and playback lines into the addon's SavedVariables data. Use /reload or log out before reading the saved file from disk.",
+        function(self)
+        SetMusicTraceEnabled(self:GetChecked())
+    end)
+
+    ui.musicIntroCheckbox = CreateCheckbox(musicSection, 2, -144, "Play intro cue on fresh entry",
+        "When you enter Silvermoon City or Eversong Woods from outside the supported region, the addon can play the intro music before rotating into day or night tracks.",
+        function(self)
+        SetMusicUseIntroEnabled(self:GetChecked())
+    end)
+
+    local musicStatusTitle = musicSection:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    musicStatusTitle:SetPoint("TOPLEFT", 6, -182)
+    musicStatusTitle:SetText("Music Status")
+
+    ui.musicStatusText = musicSection:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    ui.musicStatusText:SetPoint("TOPLEFT", musicStatusTitle, "BOTTOMLEFT", 0, -10)
+    ui.musicStatusText:SetWidth(430)
+    ui.musicStatusText:SetJustifyH("LEFT")
+    ui.musicStatusText:SetJustifyV("TOP")
+
+    CreateActionButton(musicSection, 140, 24, "Test Intro", 6, -300, function()
+        local introPool = GetMusicTrackPool(MUSIC_REGION_SILVERMOON, "intro")
+        local trackID = introPool and introPool[1]
+        if trackID then
+            PlayMusicTrack(trackID, "intro", "manual test")
+            RefreshUI()
+        end
+    end)
+    CreateActionButton(musicSection, 140, 24, "Test Day", 152, -300, function()
+        local pool = GetMusicTrackPool(MUSIC_REGION_SILVERMOON, "day")
+        local trackID = ChooseMusicTrack("day", pool)
+        if trackID then
+            PlayMusicTrack(trackID, "day", "manual test")
+            RefreshUI()
+        end
+    end)
+    CreateActionButton(musicSection, 140, 24, "Test Night", 298, -300, function()
+        local pool = GetMusicTrackPool(MUSIC_REGION_SILVERMOON, "night")
+        local trackID = ChooseMusicTrack("night", pool)
+        if trackID then
+            PlayMusicTrack(trackID, "night", "manual test")
+            RefreshUI()
+        end
+    end)
+    CreateActionButton(musicSection, 212, 24, "Re-apply Music Mutes", 6, -332, function()
+        SetMusicMuteEnabled(true)
+        if BElfVRDB.enabled and BElfVRDB.musicEnabled then
+            print("|cff7FD4FF[BElfVR Music]|r Music mutes enabled and reapplied.")
+        else
+            print("|cff7FD4FF[BElfVR Music]|r Music mute option enabled. Mutes will apply when music logic is active.")
+        end
+    end)
+    CreateActionButton(musicSection, 212, 24, "Clear Music Trace", 224, -332, function()
+        BElfVRDB.musicTraceLog = {}
+        if BElfVRDB.musicTraceEnabled then
+            RecordMusicTrace("Trace log cleared.")
+        end
+        RefreshUI()
+        print("|cff7FD4FF[BElfVR Music]|r Cleared the recorded music trace buffer.")
+    end)
+    CreateActionButton(musicSection, 212, 24, "Restore Midnight Music", 6, -364, function()
+        SetMusicMuteEnabled(false)
+        print("|cff7FD4FF[BElfVR Music]|r Unmuted all tracked Midnight music IDs.")
+    end)
+    CreateActionButton(musicSection, 212, 24, "Force Music Refresh", 224, -364, function()
+        EvaluateMusicState("manual ui refresh", true)
+        RefreshUI()
+        print("|cff7FD4FF[BElfVR Music]|r Forced a music re-evaluation.")
+    end)
+
     ui.panel = panel
+    SetSettingsTab("voice")
     RefreshUI()
 
     return panel
@@ -1944,7 +2202,6 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "PLAYER_LOGIN" then
         CreateSettingsUI()
         ApplyMutes()
-        EvaluateMusicState("login", true)
         RefreshUI()
         print("|cffFFD700[BElfVoiceRestore]|r Loaded. Type |cffFFFFFF/belvr|r to open the UI.")
 
@@ -1965,7 +2222,11 @@ frame:SetScript("OnEvent", function(self, event, arg1)
            event == "ZONE_CHANGED_INDOORS" or
            event == "ZONE_CHANGED_NEW_AREA" or
            event == "PLAYER_UPDATE_RESTING" then
-        EvaluateMusicState(event, true)
+        -- Let the music logic decide whether a real playback refresh
+        -- is warranted. These events still update trace logs, but we
+        -- should not hard-refresh the track on every tiny subzone or
+        -- resting flag flip.
+        EvaluateMusicState(event, false)
         RefreshUI()
     end
 end)
@@ -2031,7 +2292,11 @@ SlashCmdList["BELVR"] = function(input)
 
     elseif cmd == "music on" then
         SetMusicEnabled(true)
-        print("|cff7FD4FF[BElfVR Music]|r |cff00FF00Enabled.|r")
+        if BElfVRDB.enabled then
+            print("|cff7FD4FF[BElfVR Music]|r |cff00FF00Enabled.|r")
+        else
+            print("|cff7FD4FF[BElfVR Music]|r |cff00FF00Armed.|r The music system will stay idle until the main addon is enabled.")
+        end
 
     elseif cmd == "music off" then
         SetMusicEnabled(false)
@@ -2210,27 +2475,34 @@ SlashCmdList["BELVR"] = function(input)
     elseif cmd == "test female pissed" then
         PlayRandomTBC("female", "pissed")
     elseif cmd == "test music intro" then
-        local trackID = BElfVR_TBCMusic and BElfVR_TBCMusic.intro and BElfVR_TBCMusic.intro[1]
+        local context = GetMusicContext()
+        local pool = GetMusicTrackPool(context.regionKey or MUSIC_REGION_SILVERMOON, "intro")
+        local trackID = pool and pool[1]
         if trackID then
             PlayMusicTrack(trackID, "intro", "manual slash test")
             RefreshUI()
         end
     elseif cmd == "test music day" then
-        local trackID = ChooseMusicTrack("day", BElfVR_TBCMusic and BElfVR_TBCMusic.day)
+        local context = GetMusicContext()
+        local pool = GetMusicTrackPool(context.regionKey or MUSIC_REGION_SILVERMOON, "day")
+        local trackID = ChooseMusicTrack("day", pool)
         if trackID then
             PlayMusicTrack(trackID, "day", "manual slash test")
             RefreshUI()
         end
     elseif cmd == "test music night" then
-        local trackID = ChooseMusicTrack("night", BElfVR_TBCMusic and BElfVR_TBCMusic.night)
+        local context = GetMusicContext()
+        local pool = GetMusicTrackPool(context.regionKey or MUSIC_REGION_SILVERMOON, "night")
+        local trackID = ChooseMusicTrack("night", pool)
         if trackID then
             PlayMusicTrack(trackID, "night", "manual slash test")
             RefreshUI()
         end
     elseif cmd == "music stop" then
         ResetMusicState(true)
+        state.musicManualStop = true
         RefreshUI()
-        print("|cff7FD4FF[BElfVR Music]|r Stopped injected music and cleared the current music state.")
+        print("|cff7FD4FF[BElfVR Music]|r Stopped injected music. Playback will stay idle until you move to a new area, re-enable WoW music, or force a refresh.")
 
     else
         print("|cffFFD700[BElfVR]|r Commands:")

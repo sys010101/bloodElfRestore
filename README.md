@@ -1,6 +1,6 @@
 # Blood Elf Voice Restore
 
-Version: `0.3.0-alpha`
+Version: `0.4.0-alpha`
 
 ## Disclaimer
 
@@ -14,7 +14,7 @@ If that is not your thing, please abstain from low-value or useless comments.
 
 Blood Elf Voice Restore is a World of Warcraft addon for Midnight-era Silvermoon that suppresses selected new Blood Elf NPC voice lines and injects original TBC-era Blood Elf voice sets during NPC interaction events.
 
-It now also includes a first-pass Silvermoon / Eversong music layer that mutes tracked Midnight music FileDataIDs and injects old TBC Silvermoon music on the music channel.
+It now also includes a broader first-pass Quel'Thalas music layer that mutes tracked Midnight music FileDataIDs and injects old TBC regional music on the music channel.
 
 ## What The Addon Does
 
@@ -26,7 +26,7 @@ It now also includes a first-pass Silvermoon / Eversong music layer that mutes t
 - Supports bye playback when you click away from a recently greeted target
 - Supports pissed playback after repeated clicks on the same NPC
 - Mutes tracked Midnight Silvermoon / Eversong music FileDataIDs listed in `SoundData.lua`
-- Injects TBC Silvermoon intro/day/night music while you remain in supported Blood Elf music areas
+- Injects region-aware TBC intro/day/night music while you remain in supported Blood Elf music areas
 - Uses shuffle-with-cooldown logic so the same TBC music track is strongly discouraged from repeating too soon
 - Can record music routing traces into SavedVariables for later analysis
 - Exposes an in-game settings and test UI via `/belvr`
@@ -53,6 +53,12 @@ It now also includes a first-pass Silvermoon / Eversong music layer that mutes t
   - `Eversong Woods`
   - `Sanctum of Light`
   - selected supported subzones such as `The Bazaar`
+- Region routing now distinguishes:
+  - `silvermoon`
+  - `eversong`
+  - `sunstrider`
+  - `ghostlands`
+- The settings UI is now split into separate `Voice` and `Music` tabs
 - Music can optionally play an intro cue on fresh entry, then rotate through day or night pools
 - Music trace recording can be enabled, walked through the city, and saved via `/reload` or logout for later tuning
 
@@ -95,6 +101,13 @@ The music system uses a similar approximation model:
 3. Choose an intro/day/night TBC music track.
 4. Avoid immediate repeats with a per-track cooldown.
 5. Stop and restart the injected music with a short fade when the context changes.
+
+In `0.4.0-alpha`, the music layer also:
+
+- uses region-specific pools for broader Eversong, Sunstrider Isle, and ghostlands-style southern areas
+- avoids replaying intro cues too often with a separate intro cooldown
+- lets known tracks finish naturally instead of cutting them off with the old coarse timer
+- keeps `/belvr music stop` idle until a real resume trigger occurs
 
 ## Main Files
 

@@ -3,11 +3,11 @@
 ## Current Purpose
 
 Current working version:
-- `0.3.0-alpha`
+- `0.4.0-alpha`
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Silvermoon while muting the newer Midnight replacement voice set.
 
-It also now includes a first-pass music replacement layer for `Silvermoon City` and `Eversong Woods` that can mute tracked Midnight music FileDataIDs and inject old TBC Silvermoon music on the music channel.
+It also now includes a broader first-pass music replacement layer for `Silvermoon City`, `Eversong Woods`, `Sunstrider Isle`, and ghostlands-style southern remastered subzones that can mute tracked Midnight music FileDataIDs and inject old TBC music on the music channel.
 
 Main behavior:
 - Mutes tracked Midnight Blood Elf voice FileDataIDs from `SoundData.lua`
@@ -17,7 +17,7 @@ Main behavior:
 - Plays TBC bye lines when you click away from a previously greeted target
 - Plays TBC pissed lines after repeated clicks on the same NPC
 - Mutes tracked Midnight Silvermoon / Eversong music FileDataIDs from `SoundData.lua`
-- Injects TBC intro/day/night Silvermoon music while you remain in supported Blood Elf zones
+- Injects region-aware TBC intro/day/night music while you remain in supported Blood Elf zones
 - Uses a shuffle-with-cooldown music picker so the same TBC music track is strongly discouraged from repeating immediately
 
 ## Core Files
@@ -51,6 +51,7 @@ The addon now has an in-game UI window opened with:
 - `/belvr`
 
 Current UI includes:
+- `Voice` and `Music` tabs instead of one long control stack
 - Enable addon toggle
 - Mute new Midnight VO toggle
 - Verbose debug toggle
@@ -168,22 +169,36 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
 
 - TBC replacement music runs only when `Enable addon logic`, `Enable replacement music logic`, and `Mute tracked Midnight Silvermoon music files` are all enabled
 - If tracked music muting is disabled, the addon stops injecting TBC music so Midnight and TBC music do not stack
-- Supported music routing is currently limited to:
+- Supported broad music routing currently includes:
   - `Silvermoon City`
-  - `Eversong Woods`
   - `Sanctum of Light`
-- Supported subzone fallback routing currently includes:
+  - `Eversong Woods`
+- Region routing now groups playback into:
+  - `silvermoon`
+  - `eversong`
+  - `sunstrider`
+  - `ghostlands`
+- Supported subzone fallback and override routing now includes:
   - `The Bazaar`
+  - `Sunstrider Isle`
+  - `Tranquillien`
+  - `Sanctum of the Moon`
+  - several southern / haunted remastered subzones mapped into the `ghostlands` family
 - The music system checks:
   - zone changes
   - indoor-like subzone changes
   - resting state changes
   - in-game day/night phase
 - A first-entry intro cue can optionally play before the day/night rotation
-- Long stays in the same supported area periodically rotate to another TBC music track
+- Intro cues now have a separate cooldown so they do not spam on quick re-entry
+- Known-duration tracks are now allowed to finish naturally instead of being cut off by the old coarse rotation timer
+- Long stays in the same supported area still have fallback periodic rotation for unknown-duration cases
 - The music shuffle system keeps recently played TBC tracks on a cooldown so the same track does not immediately repeat
+- Playback routing now keys off a stable region + day/night signature instead of tiny subzone churn, which greatly reduces constant restarts while moving around Silvermoon
 - Music stop transitions currently use a longer fade than the first pass to reduce abrupt cutoffs when area routing changes
 - Music debug output now indicates whether the current area was matched by zone name or by subzone allow-list
+- `/belvr music stop` now creates a real manual stop state and stays idle until a meaningful resume trigger occurs
+- Slash music test commands now use the same region-aware pool selection as the live music system
 - Music trace recording can capture:
   - context changes
   - support source (zone vs subzone)
@@ -227,6 +242,9 @@ Add them to:
 - `BElfVR_TBCMusic.intro`
 - `BElfVR_TBCMusic.day`
 - `BElfVR_TBCMusic.night`
+- `BElfVR_TBCMusicRegions.<region>.intro`
+- `BElfVR_TBCMusicRegions.<region>.day`
+- `BElfVR_TBCMusicRegions.<region>.night`
 
 Keep the current grouping/order:
 - noble block first

@@ -145,12 +145,116 @@ BElfVR_NewVoiceIDs = {
 --  - and comparing verbose logs harder for anyone sharing notes.
 -- ============================================================
 BElfVR_NewMusicIDs = {
+    -- Legacy manually-found Midnight music IDs
     7713991, -- mus_1200_silent_207_7713991
     7681090, -- mus_1200_murder_row_7681090
     7681092, -- mus_1200_murder_row_7681092
     7681094, -- mus_1200_murder_row_7681094
     7726826, -- mus_1200_silent_317_7726826
     7713989, -- mus_1200_silent_046_7713989
+
+    -- Broad Eversong village family
+    7690509, -- mus_120_eversong_village_a
+    7690511, -- mus_120_eversong_village_b
+    7690513, -- mus_120_eversong_village_c
+    7690515, -- mus_120_eversong_village_d
+    7690517, -- mus_120_eversong_village_e
+    7690519, -- mus_120_eversong_village_f
+    7690521, -- mus_120_eversong_village_h
+
+    -- Broad Eversong outdoors family
+    7690523, -- mus_120_eversong_woods_a
+    7690525, -- mus_120_eversong_woods_b
+    7690527, -- mus_120_eversong_woods_c
+    7690529, -- mus_120_eversong_woods_d
+    7690531, -- mus_120_eversong_woods_e
+    7690533, -- mus_120_eversong_woods_h
+
+    -- Silvermoon city family
+    7681120, -- mus_120_silvermoon_city_a
+    7681122, -- mus_120_silvermoon_city_b
+    7681124, -- mus_120_silvermoon_city_c
+    7681126, -- mus_120_silvermoon_city_d
+    7681128, -- mus_120_silvermoon_city_e
+    7713432, -- mus_120_silvermoon_city_f
+    7713434, -- mus_120_silvermoon_city_g
+    7681130, -- mus_120_silvermoon_city_h
+    7713436, -- mus_120_silvermoon_city_i
+    7713438, -- mus_120_silvermoon_city_j
+    7713440, -- mus_120_silvermoon_city_k
+
+    -- Silvermoon city void variants
+    7696440, -- mus_120_silvermoon_city_void_a
+    7696442, -- mus_120_silvermoon_city_void_b
+    7696444, -- mus_120_silvermoon_city_void_c
+    7696446, -- mus_120_silvermoon_city_void_d
+    7696448, -- mus_120_silvermoon_city_void_e
+    7696450, -- mus_120_silvermoon_city_void_f
+    7696452, -- mus_120_silvermoon_city_void_g
+    7696454, -- mus_120_silvermoon_city_void_i
+
+    -- Silvermoon featured variants that can still bleed through in interiors or themed pockets
+    7698320, -- mus_120_silvermoon_harp_h
+    7698322, -- mus_120_silvermoon_horde_a
+    7698324, -- mus_120_silvermoon_horde_b
+    7698326, -- mus_120_silvermoon_horde_c
+    7713448, -- mus_120_silvermoon_horde_d
+    7698328, -- mus_120_silvermoon_horde_h
+    7713442, -- mus_120_silvermoon_horde_void_a
+    7713444, -- mus_120_silvermoon_horde_void_b
+    7713446, -- mus_120_silvermoon_horde_void_c
+    7726430, -- mus_120_silvermoon_horde_void_d
+    7698330, -- mus_120_silvermoon_inn_a
+    7698332, -- mus_120_silvermoon_inn_h
+
+    -- Sanctum / nearby Quel'Thalas variants that can bleed through at boundary pockets
+    7681108, -- mus_120_sanctum_of_light_a
+    7681110, -- mus_120_sanctum_of_light_b
+    7681112, -- mus_120_sanctum_of_light_c
+    7681114, -- mus_120_sanctum_of_light_d
+    7681116, -- mus_120_sanctum_of_light_e
+    7681118, -- mus_120_sanctum_of_light_h
+    7713414, -- mus_120_lake_eldrendar_void_a
+    7713416, -- mus_120_lake_eldrendar_void_b
+    7713418, -- mus_120_lake_eldrendar_void_c
+    7698334, -- mus_120_windrunner_village_a
+    7698336, -- mus_120_windrunner_village_b
+    7698338, -- mus_120_windrunner_village_c
+    7698340, -- mus_120_windrunner_village_d
+    7713466, -- mus_120_windrunner_village_e
+    7713468, -- mus_120_windrunner_village_f
+    7698342, -- mus_120_windrunner_village_h1
+    7698344, -- mus_120_windrunner_village_h2
+
+    -- Broader Eversong-side families still likely to appear in remastered subzones
+    7696420, -- mus_120_gloom_mire_a
+    7696422, -- mus_120_gloom_mire_b
+    7696424, -- mus_120_gloom_mire_c
+    7696426, -- mus_120_gloom_mire_d
+    7696428, -- mus_120_gloom_mire_e
+    7696430, -- mus_120_gloom_mire_h
+    7682352, -- mus_120_lake_eldrendar_a
+    7682354, -- mus_120_lake_eldrendar_b
+    7682356, -- mus_120_lake_eldrendar_c
+    7682358, -- mus_120_lake_eldrendar_d
+    7682360, -- mus_120_lake_eldrendar_e
+    7682362, -- mus_120_lake_eldrendar_f
+    7682364, -- mus_120_lake_eldrendar_h
+    7690535, -- mus_120_lightbloom_a
+    7690537, -- mus_120_lightbloom_b
+    7690539, -- mus_120_lightbloom_c
+    7690541, -- mus_120_lightbloom_d
+    7690543, -- mus_120_lightbloom_e
+    7690545, -- mus_120_lightbloom_f
+    7690547, -- mus_120_lightbloom_g
+    7690549, -- mus_120_lightbloom_h
+    7698294, -- mus_120_lightbloom_harandar_a
+    7698296, -- mus_120_lightbloom_harandar_b
+    7698298, -- mus_120_lightbloom_harandar_c
+    7698300, -- mus_120_lightbloom_harandar_d
+    7698302, -- mus_120_lightbloom_harandar_e
+    7698304, -- mus_120_lightbloom_harandar_f
+    7698306, -- mus_120_lightbloom_harandar_h
 }
 
 
@@ -182,6 +286,188 @@ BElfVR_TBCMusic = {
         53478, -- ES_SilvermoonWalKnight02
         53479, -- ES_SilvermoonWalKnight03
     },
+}
+
+
+-- ============================================================
+--  TBC ORIGINAL MUSIC - REGION OVERRIDES
+--  This optional table lets each logical music region use its own
+--  TBC pools. If a region or category is empty, the addon falls
+--  back to the legacy `BElfVR_TBCMusic` table above.
+--
+--  SAFE TO CHANGE:
+--  - Add verified IDs to the empty `eversong` or `ghostlands`
+--    buckets as you map Midnight-era Quel'Thalas.
+--  - You may also override `silvermoon` explicitly if you want
+--    different behavior than the legacy fallback table.
+--
+--  DO NOT RENAME THE REGION KEYS:
+--  - The code expects `silvermoon`, `eversong`, `sunstrider`, and `ghostlands`.
+-- ============================================================
+BElfVR_TBCMusicRegions = {
+    silvermoon = {
+        intro = {},
+        day = {},
+        night = {},
+    },
+    eversong = {
+        -- A soft scene-setter used when entering the broader Eversong region.
+        intro = {
+            53468, -- ES_ScenicIntroNight01
+        },
+        -- General daytime Eversong travel pool.
+        -- This intentionally blends several classic Eversong families so the
+        -- remastered zone can still feel varied even though its original
+        -- sub-areas no longer map cleanly one-to-one.
+        day = {
+            53458, -- ES_BuildingWalkDay01
+            53459, -- ES_BuildingWalkDay02
+            53462, -- ES_RuinsWalkDay01
+            53463, -- ES_RuinsWalkDay02
+            53464, -- ES_RuinsWalkDay03
+            53469, -- ES_ScortchedWalkDay01
+            53470, -- ES_ScortchedWalkDay02
+            53480, -- ES_SunstriderWalkDay01
+            53481, -- ES_SunstriderWalkDay02
+            53482, -- ES_SunstriderWalkDay03
+        },
+        -- General nighttime Eversong travel pool.
+        night = {
+            53460, -- ES_BuildingWalkNight01
+            53461, -- ES_BuildingWalkNight02
+            53465, -- ES_RuinsWalkNight01
+            53466, -- ES_RuinsWalkNight02
+            53467, -- ES_RuinsWalkNight03
+            53471, -- ES_ScortchedWalkNight01
+            53472, -- ES_ScortchedWalkNight02
+            53483, -- ES_SunstriderWalkNight01
+            53484, -- ES_SunstriderWalkNight02
+            53485, -- ES_SunstriderWalkNight03
+        },
+    },
+    sunstrider = {
+        -- Keep Sunstrider Isle distinct from the broader mixed Eversong pool.
+        intro = {
+            53468, -- ES_ScenicIntroNight01
+        },
+        day = {
+            53480, -- ES_SunstriderWalkDay01
+            53481, -- ES_SunstriderWalkDay02
+            53482, -- ES_SunstriderWalkDay03
+        },
+        night = {
+            53483, -- ES_SunstriderWalkNight01
+            53484, -- ES_SunstriderWalkNight02
+            53485, -- ES_SunstriderWalkNight03
+        },
+    },
+    ghostlands = {
+        -- A neutral scenic lead-in for the darker southern / haunted region.
+        intro = {
+            53513, -- GL_ScenicWalkUni01
+        },
+        -- Daytime ghostlands-style pool for the Tranquillien corridor and
+        -- surrounding haunted / damaged areas.
+        day = {
+            53499, -- GL_EversongDarkWalkUni01
+            53500, -- GL_EversongDarkWalkUni02
+            53501, -- GL_EversongDarkWalkUni03
+            53502, -- GL_EversongDarkWalkUni04
+            53503, -- GL_Forest1WalkDay01
+            53504, -- GL_Forest1WalkDay02
+            53506, -- GL_Forest2WalkDay01
+            53509, -- GL_Forest3WalkDay01
+            53513, -- GL_ScenicWalkUni01
+            53514, -- GL_ScenicWalkUni02
+            53515, -- GL_ScenicWalkUni03
+            53516, -- GL_ShalandisWalkUni01
+            53517, -- GL_ShalandisWalkUni02
+            53518, -- GL_ShalandisWalkUni03
+        },
+        -- Nighttime ghostlands-style pool.
+        night = {
+            53499, -- GL_EversongDarkWalkUni01
+            53500, -- GL_EversongDarkWalkUni02
+            53501, -- GL_EversongDarkWalkUni03
+            53502, -- GL_EversongDarkWalkUni04
+            53505, -- GL_Forest1WalkNight01
+            53507, -- GL_Forest2WalkNight01
+            53508, -- GL_Forest2WalkNight02
+            53510, -- GL_Forest3WalkNight01
+            53511, -- GL_Forest3WalkNight02
+            53512, -- GL_Forest3WalkNight03
+            53513, -- GL_ScenicWalkUni01
+            53514, -- GL_ScenicWalkUni02
+            53515, -- GL_ScenicWalkUni03
+            53516, -- GL_ShalandisWalkUni01
+            53517, -- GL_ShalandisWalkUni02
+            53518, -- GL_ShalandisWalkUni03
+        },
+    },
+}
+
+
+-- ============================================================
+--  TBC MUSIC DURATIONS
+--  Approximate track lengths in seconds for the replacement
+--  music IDs used by this addon.
+--
+--  SAFE TO CHANGE:
+--  - If you verify a duration is slightly off, you may adjust it.
+--
+--  CHANGE WITH CARE:
+--  - If a value is wildly wrong, the addon may think a track ended
+--    too early or too late, which can create awkward gaps.
+-- ============================================================
+BElfVR_TBCMusicDurations = {
+    [53458] = 65,
+    [53459] = 68,
+    [53460] = 84,
+    [53461] = 83,
+    [53462] = 48,
+    [53463] = 71,
+    [53464] = 70,
+    [53465] = 50,
+    [53466] = 83,
+    [53467] = 67,
+    [53468] = 97,
+    [53469] = 116,
+    [53470] = 102,
+    [53471] = 69,
+    [53472] = 61,
+    [53473] = 132,
+    [53474] = 64,
+    [53475] = 79,
+    [53476] = 64,
+    [53477] = 177,
+    [53478] = 71,
+    [53479] = 80,
+    [53480] = 80,
+    [53481] = 58,
+    [53482] = 67,
+    [53483] = 100,
+    [53484] = 100,
+    [53485] = 86,
+    [53499] = 62,
+    [53500] = 62,
+    [53501] = 63,
+    [53502] = 60,
+    [53503] = 66,
+    [53504] = 70,
+    [53505] = 67,
+    [53506] = 83,
+    [53507] = 59,
+    [53508] = 60,
+    [53509] = 154,
+    [53510] = 51,
+    [53511] = 28,
+    [53512] = 44,
+    [53513] = 89,
+    [53514] = 81,
+    [53515] = 78,
+    [53516] = 131,
+    [53517] = 103,
+    [53518] = 67,
 }
 
 

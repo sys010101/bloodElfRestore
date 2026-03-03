@@ -3,7 +3,7 @@
 ## Title: |cffFFD700Blood Elf|r Voice Restore
 ## Notes: Restores TBC-era Blood Elf voices and first-pass Silvermoon / Eversong music while muting tracked Midnight replacements
 ## Author: sys01 and Codex 5.3
-## Version: 0.3.0-alpha
+## Version: 0.4.0-alpha
 ## SavedVariables: BElfVRDB
 ## X-BuildVersion: 66198
 

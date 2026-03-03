@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0-alpha
+
+- Expanded music routing from a basic Silvermoon-only layer into broader region families:
+  - `silvermoon`
+  - `eversong`
+  - `sunstrider`
+  - `ghostlands`
+- Added region-specific TBC music pools for broader Eversong travel, Sunstrider Isle, and ghostlands-style southern / haunted areas.
+- Added a much larger set of tracked Midnight Quel'Thalas music mute IDs to reduce double-music bleed-through in subzones and boundary pockets.
+- Added subzone region overrides for areas such as `Sunstrider Isle`, `Tranquillien`, `Sanctum of the Moon`, `Windrunner Village`, and other southern remastered subzones.
+- Added approximate music duration data so known replacement tracks are allowed to finish naturally instead of being cut off by the old coarse rotation timer.
+- Added intro cooldown handling so intro cues do not replay too often on quick re-entry to the same region.
+- Fixed long dead gaps after a track finished by clearing stale playback state as soon as the expected track lifetime expires.
+- Fixed excessive music restart churn by routing playback from a stable region/day-night key instead of refreshing on every tiny subzone or resting-state change.
+- Fixed startup double-play on login by moving initial music startup to `PLAYER_ENTERING_WORLD` only.
+- Added live handling for WoW's global music toggle (`Ctrl+M`), including clean resume behavior when music is re-enabled.
+- Fixed scheduler behavior while WoW music output is disabled so it no longer burns shuffle state selecting tracks that cannot play.
+- Added a real manual-stop hold state for `/belvr music stop`, so it no longer immediately auto-resumes on the next periodic tick.
+- Fixed slash-command music test playback so it now uses the same region-aware pool selection as the live music system.
+- Improved slash-command feedback for `/belvr music on` so it reports when the music system is only armed because the master addon switch is still off.
+- Reworked the settings UI into separate `Voice` and `Music` tabs instead of one long stacked control panel.
+- Adjusted tab layout spacing to avoid overlap between the tab buttons and the first controls in each section.
+- Kept the known limitation that `Ctrl+M` fade-out still depends on Blizzard's own music channel behavior and may remain abrupt.
+- Updated TOC metadata and docs to `0.4.0-alpha`.
+
 ## 0.3.0-alpha
 
 - Added first-pass Silvermoon / Eversong music replacement support alongside the existing voice system.
