@@ -2,6 +2,14 @@
 
 Version: `0.3.0-alpha`
 
+## Disclaimer
+
+This project has been heavily vibe-coded.
+
+My personal coding experience is limited, and I am doing what I can to build, test, and improve it as I go.
+
+If that is not your thing, please abstain from low-value or useless comments.
+
 Blood Elf Voice Restore is a World of Warcraft addon for Midnight-era Silvermoon that suppresses selected new Blood Elf NPC voice lines and injects original TBC-era Blood Elf voice sets during NPC interaction events.
 
 It now also includes a first-pass Silvermoon / Eversong music layer that mutes tracked Midnight music FileDataIDs and injects old TBC Silvermoon music on the music channel.
