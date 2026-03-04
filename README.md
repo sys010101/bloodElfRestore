@@ -57,7 +57,7 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
   - `silvermoon`
   - `eversong`
   - `sunstrider`
-  - `ghostlands`
+  - `ex-ghostlands`
 - The settings UI is now split into separate `Voice` and `Music` tabs
 - Music can optionally play an intro cue on fresh entry, then rotate through day or night pools
 - Music trace recording can be enabled, walked through the city, and saved via `/reload` or logout for later tuning
