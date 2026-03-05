@@ -11,7 +11,6 @@
 -- ============================================================
 
 local ADDON_NAME = "bloodElfRestore"
-local addon = {}
 local DB_SCHEMA_VERSION = 3
 
 -- How many clicks on the same NPC before triggering a pissed line
@@ -36,7 +35,6 @@ local BLOOD_ELF_FALLBACK_ZONES = {
     ["eversong woods"] = true,
     ["sunstrider isle"] = true,
     ["ghostlands"] = true,
-    ["zul'aman"] = false,
 }
 
 -- ============================================================
@@ -2233,6 +2231,9 @@ end)
 
 frame:SetScript("OnUpdate", function(self, elapsed)
     if not BElfVRDB then
+        return
+    end
+    if not IsMusicReplacementActive() then
         return
     end
 

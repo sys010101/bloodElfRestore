@@ -313,3 +313,17 @@ In `BElfVoiceRestore.lua`:
 5. Consider deprecating the old `genderOverrides` / `roleOverrides` saved-variable fields entirely in a cleanup pass
 6. Expand the Silvermoon music zone/subzone allow-lists from recorded trace sessions
 7. Use recorded trace sessions to identify additional Midnight music FileDataIDs that still leak through and add them to `BElfVR_NewMusicIDs`
+
+## Session Update (2026-03-05)
+
+Low-risk cleanup pass applied in `BElfVoiceRestore.lua` after review triage:
+
+- Removed unused `local addon = {}` declaration near the top of the file.
+- Removed dead fallback-zone entry `["zul'aman"] = false` from `BLOOD_ELF_FALLBACK_ZONES`.
+- Added an early `OnUpdate` short-circuit:
+  - `if not IsMusicReplacementActive() then return end`
+  - This avoids periodic music evaluation work while replacement music is disabled/unmuted.
+
+Notes:
+- No behavior-changing refactors were done in this pass.
+- Potential larger refactors (voice pool structural enforcement, trace-buffer internals) remain optional and were intentionally deferred.
