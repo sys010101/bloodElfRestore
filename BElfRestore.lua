@@ -2271,6 +2271,9 @@ end
 
 local function ShowSettingsUI()
     local panel = CreateSettingsUI()
+    if not panel then
+        return
+    end
     RefreshUI()
     panel:Show()
     panel:Raise()
