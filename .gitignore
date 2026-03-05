@@ -16,6 +16,7 @@ desktop.ini
 
 # Release bundles
 *.zip
+release/
 
 # Log captures exported manually during testing
 *.log
