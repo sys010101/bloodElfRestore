@@ -1,5 +1,5 @@
 -- ============================================================
---  BElfVoiceRestore - BElfVoiceRestore.lua
+--  BElfRestore - BElfRestore.lua
 --  Main addon logic
 --
 --  What this addon does:
@@ -61,6 +61,7 @@ local MUSIC_TRACK_ROTATE_SECONDS = 85
 local MUSIC_REPEAT_COOLDOWN = 180
 local MUSIC_INTRO_REPEAT_COOLDOWN = 600
 local MUSIC_TRANSITION_FADE_MS = 900
+local MUSIC_FORCE_STOP_NATIVE_BEFORE_REPLACEMENT = true
 local MUSIC_END_GRACE_SECONDS = 0.5
 local MUSIC_DAY_START_HOUR = 6
 local MUSIC_NIGHT_START_HOUR = 18
@@ -85,6 +86,32 @@ local BLOOD_ELF_MUSIC_SUBZONES = {
     ["the bazaar"] = true,
 }
 
+-- Settings UI art background.
+-- Source art is 1920x1200 (16:10). Keep the same aspect while fitting
+-- the current panel without cropping.
+local UI_ART_PATH = "Interface\\AddOns\\bloodElfRestore\\tbc_art"
+local UI_ART_PATH_WITH_EXT = "Interface\\AddOns\\bloodElfRestore\\tbc_art.jpg"
+local UI_ART_ASPECT_RATIO = 16 / 10
+local UI_ART_ALPHA = 0.10
+-- 0.0 = strict contain (full image, small on tall panels)
+-- 1.0 = strict cover (full panel, stronger side crop)
+local UI_ART_FIT_BLEND = 1.0
+-- Manual art zoom (independent from UI size). Values > 1 enlarge.
+-- Overspill is clipped by the UI art host frame.
+local UI_ART_SCALE_X = 1.0
+local UI_ART_SCALE_Y = 1.0
+-- Art host margins inside the window.
+local UI_ART_MARGIN_LEFT = 12
+local UI_ART_MARGIN_RIGHT = 12
+local UI_ART_MARGIN_TOP = 50
+local UI_ART_MARGIN_BOTTOM = 12
+local SETTINGS_UI_WIDTH = 550
+local SETTINGS_UI_HEIGHT = 750
+local SETTINGS_CONTENT_WIDTH = 446
+local SETTINGS_CONTENT_SIDE_MARGIN = math.floor((SETTINGS_UI_WIDTH - SETTINGS_CONTENT_WIDTH) * 0.5)
+local SETTINGS_TAB_GROUP_WIDTH = 190 -- 2x 92px buttons + 6px gap
+local SETTINGS_TAB_START_X = math.floor((SETTINGS_UI_WIDTH - SETTINGS_TAB_GROUP_WIDTH) * 0.5)
+
 -- Broad music families. These are what the actual playback logic
 -- should react to. Fine-grained subzones are still logged for
 -- mapping, but they should not constantly restart the same track
@@ -92,7 +119,16 @@ local BLOOD_ELF_MUSIC_SUBZONES = {
 local MUSIC_REGION_SILVERMOON = "silvermoon"
 local MUSIC_REGION_EVERSONG = "eversong"
 local MUSIC_REGION_SUNSTRIDER = "sunstrider"
-local MUSIC_REGION_GHOSTLANDS = "ghostlands"
+local MUSIC_REGION_EVERSONG_SOUTH = "eversong_south"
+local MUSIC_REGION_DEATHOLME = "deatholme"
+local MUSIC_REGION_LEGACY_GHOSTLANDS = "ghostlands"
+
+local function NormalizeMusicRegionKey(regionKey)
+    if regionKey == MUSIC_REGION_LEGACY_GHOSTLANDS then
+        return MUSIC_REGION_EVERSONG_SOUTH
+    end
+    return regionKey
+end
 
 -- Some Midnight-era subzones still logically belong to a different
 -- music family than the broad top-level zone name suggests.
@@ -102,21 +138,21 @@ local MUSIC_REGION_GHOSTLANDS = "ghostlands"
 -- - Add lowercase subzone names here as you confirm they should
 --   borrow a different regional music family.
 local MUSIC_SUBZONE_REGION_OVERRIDES = {
-    ["amani pass"] = MUSIC_REGION_GHOSTLANDS,
-    ["daggerspine landing"] = MUSIC_REGION_GHOSTLANDS,
-    ["daggerspine point"] = MUSIC_REGION_GHOSTLANDS,
-    ["farstrider enclave"] = MUSIC_REGION_GHOSTLANDS,
-    ["goldenmist village"] = MUSIC_REGION_GHOSTLANDS,
-    ["ruins of deatholme"] = MUSIC_REGION_GHOSTLANDS,
-    ["tranquillien"] = MUSIC_REGION_GHOSTLANDS,
-    ["sanctum of the moon"] = MUSIC_REGION_GHOSTLANDS,
+    ["amani pass"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["daggerspine landing"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["daggerspine point"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["farstrider enclave"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["goldenmist village"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["ruins of deatholme"] = MUSIC_REGION_DEATHOLME,
+    ["tranquillien"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["sanctum of the moon"] = MUSIC_REGION_EVERSONG_SOUTH,
     ["sunstrider isle"] = MUSIC_REGION_SUNSTRIDER,
-    ["suncrown village"] = MUSIC_REGION_GHOSTLANDS,
-    ["thalassian pass"] = MUSIC_REGION_GHOSTLANDS,
-    ["windrunner spire"] = MUSIC_REGION_GHOSTLANDS,
-    ["windrunner village"] = MUSIC_REGION_GHOSTLANDS,
-    ["zeb'nowa"] = MUSIC_REGION_GHOSTLANDS,
-    ["zeb'tela ruins"] = MUSIC_REGION_GHOSTLANDS,
+    ["suncrown village"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["thalassian pass"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["windrunner spire"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["windrunner village"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["zeb'nowa"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["zeb'tela ruins"] = MUSIC_REGION_EVERSONG_SOUTH,
 }
 
 
@@ -268,9 +304,9 @@ end
 -- DO NOT REMOVE THE RING-BUFFER TRIM:
 -- - Unbounded growth will bloat the SavedVariables file and can
 --   become annoying to load and inspect.
-local function RecordMusicTrace(msg)
-    if not (BElfVRDB and BElfVRDB.musicTraceEnabled) then
-        return
+local function AppendMusicTraceLine(msg)
+    if not BElfVRDB then
+        return false
     end
 
     BElfVRDB.musicTraceLog = BElfVRDB.musicTraceLog or {}
@@ -288,6 +324,16 @@ local function RecordMusicTrace(msg)
             tremove(log, 1)
         end
     end
+
+    return true
+end
+
+local function RecordMusicTrace(msg)
+    if not (BElfVRDB and BElfVRDB.musicTraceEnabled) then
+        return
+    end
+
+    AppendMusicTraceLine(msg)
 end
 
 local function ShowHelpTooltip(self, title, text)
@@ -466,10 +512,31 @@ end
 -- falls back to the legacy global Silvermoon table so empty buckets
 -- still behave sensibly while mapping is in progress.
 local function GetMusicTrackPool(regionKey, poolName)
-    local regionData = BElfVR_TBCMusicRegions and regionKey and BElfVR_TBCMusicRegions[regionKey]
+    local canonicalRegionKey = NormalizeMusicRegionKey(regionKey)
+    local regionData = BElfVR_TBCMusicRegions and canonicalRegionKey and BElfVR_TBCMusicRegions[canonicalRegionKey]
     local regionPool = regionData and regionData[poolName]
     if regionPool and #regionPool > 0 then
-        return regionPool, regionKey
+        return regionPool, canonicalRegionKey
+    end
+
+    -- If a custom pack has not added dedicated Deatholme buckets yet,
+    -- fall back to the broader southern-Eversong family first.
+    if canonicalRegionKey == MUSIC_REGION_DEATHOLME and BElfVR_TBCMusicRegions then
+        local southRegionData = BElfVR_TBCMusicRegions[MUSIC_REGION_EVERSONG_SOUTH]
+        local southRegionPool = southRegionData and southRegionData[poolName]
+        if southRegionPool and #southRegionPool > 0 then
+            return southRegionPool, MUSIC_REGION_EVERSONG_SOUTH
+        end
+    end
+
+    -- Backward compatibility: if custom/community data still uses the
+    -- legacy `ghostlands` bucket, treat it as `eversong_south`.
+    if canonicalRegionKey == MUSIC_REGION_EVERSONG_SOUTH and BElfVR_TBCMusicRegions then
+        local legacyRegionData = BElfVR_TBCMusicRegions[MUSIC_REGION_LEGACY_GHOSTLANDS]
+        local legacyRegionPool = legacyRegionData and legacyRegionData[poolName]
+        if legacyRegionPool and #legacyRegionPool > 0 then
+            return legacyRegionPool, canonicalRegionKey
+        end
     end
 
     local legacyPool = BElfVR_TBCMusic and BElfVR_TBCMusic[poolName]
@@ -477,7 +544,7 @@ local function GetMusicTrackPool(regionKey, poolName)
         return legacyPool, MUSIC_REGION_SILVERMOON
     end
 
-    return nil, nil
+    return nil, canonicalRegionKey
 end
 
 local function ShouldQueueMusicIntro(regionKey)
@@ -512,7 +579,7 @@ local function GetMusicContext()
     local isResting = IsResting() and true or false
     local isNight = IsNightTimeForMusic()
     local isIndoor = (subZoneKey ~= "" and subZoneKey ~= zoneKey)
-    local regionKey = MUSIC_SUBZONE_REGION_OVERRIDES[subZoneKey]
+    local regionKey = NormalizeMusicRegionKey(MUSIC_SUBZONE_REGION_OVERRIDES[subZoneKey])
 
     if regionKey then
         -- Explicit subzone override wins.
@@ -523,7 +590,7 @@ local function GetMusicContext()
     elseif supportedBySubZone then
         regionKey = MUSIC_REGION_SILVERMOON
     elseif supported and supportedByZone then
-        regionKey = zoneKey
+        regionKey = NormalizeMusicRegionKey(zoneKey)
     end
 
     return {
@@ -692,6 +759,14 @@ local function PlayMusicTrack(fileDataID, poolName, reason)
         LogMusic("Skipping replacement music because WoW music output is disabled.")
         RecordMusicTrace("Skipped playback because WoW music output is disabled.")
         return
+    end
+
+    if MUSIC_FORCE_STOP_NATIVE_BEFORE_REPLACEMENT and StopMusic then
+        -- Native Blizzard music can still leak in some pockets where IDs are unknown.
+        -- StopMusic() is used as a last-resort channel reset before replacement playback.
+        StopMusic()
+        LogMusic("Issued StopMusic() before replacement playback to clear native channel state.")
+        RecordMusicTrace("Issued StopMusic before replacement playback.")
     end
 
     StopInjectedMusic(MUSIC_TRANSITION_FADE_MS)
@@ -1717,9 +1792,55 @@ end
 
 local function CreateSectionFrame(parent)
     local section = CreateFrame("Frame", nil, parent)
-    section:SetPoint("TOPLEFT", parent, "TOPLEFT", 12, -96)
-    section:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -12, 12)
+    section:SetPoint("TOPLEFT", parent, "TOPLEFT", SETTINGS_CONTENT_SIDE_MARGIN, -96)
+    section:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", SETTINGS_CONTENT_SIDE_MARGIN, 12)
+    section:SetWidth(SETTINGS_CONTENT_WIDTH)
     return section
+end
+
+local function ApplyCoverTexCoords(texture, frameWidth, frameHeight, sourceAspect)
+    if not texture or not frameWidth or not frameHeight or frameWidth <= 0 or frameHeight <= 0 then
+        return
+    end
+
+    local frameAspect = frameWidth / frameHeight
+    local containWidth, containHeight
+    local coverWidth, coverHeight
+
+    if frameAspect > sourceAspect then
+        containHeight = frameHeight
+        containWidth = containHeight * sourceAspect
+        coverWidth = frameWidth
+        coverHeight = coverWidth / sourceAspect
+    else
+        containWidth = frameWidth
+        containHeight = containWidth / sourceAspect
+        coverHeight = frameHeight
+        coverWidth = coverHeight * sourceAspect
+    end
+
+    local blend = UI_ART_FIT_BLEND
+    if blend < 0 then
+        blend = 0
+    elseif blend > 1 then
+        blend = 1
+    end
+
+    local targetWidth = containWidth + (coverWidth - containWidth) * blend
+    local targetHeight = containHeight + (coverHeight - containHeight) * blend
+    local scaleX = tonumber(UI_ART_SCALE_X) or 1
+    local scaleY = tonumber(UI_ART_SCALE_Y) or 1
+    if scaleX <= 0 then
+        scaleX = 1
+    end
+    if scaleY <= 0 then
+        scaleY = 1
+    end
+    targetWidth = targetWidth * scaleX
+    targetHeight = targetHeight * scaleY
+
+    texture:SetTexCoord(0, 1, 0, 1)
+    texture:SetSize(targetWidth, targetHeight)
 end
 
 local function SetSettingsTab(tabKey)
@@ -1749,8 +1870,8 @@ local function CreateSettingsUI()
         return ui.panel
     end
 
-    local panel = CreateFrame("Frame", "BElfVoiceRestoreUI", UIParent, "BasicFrameTemplateWithInset")
-    panel:SetSize(470, 760)
+    local panel = CreateFrame("Frame", "BElfRestoreUI", UIParent, "BasicFrameTemplateWithInset")
+    panel:SetSize(SETTINGS_UI_WIDTH, SETTINGS_UI_HEIGHT)
     panel:SetPoint("CENTER")
     panel:SetClampedToScreen(true)
     panel:SetMovable(true)
@@ -1761,18 +1882,56 @@ local function CreateSettingsUI()
     panel:Hide()
     tinsert(UISpecialFrames, panel:GetName())
 
-    panel.TitleText:SetText("Blood Elf Voice Restore")
+    local artHost = CreateFrame("Frame", nil, panel)
+    artHost:SetPoint("TOPLEFT", panel, "TOPLEFT", UI_ART_MARGIN_LEFT, -UI_ART_MARGIN_TOP)
+    artHost:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -UI_ART_MARGIN_RIGHT, UI_ART_MARGIN_BOTTOM)
+    if artHost.SetClipsChildren then
+        artHost:SetClipsChildren(true)
+    end
+
+    local artLayer = artHost:CreateTexture(nil, "BORDER", nil, -8)
+    artLayer:SetPoint("CENTER", artHost, "CENTER")
+    artLayer:SetAlpha(UI_ART_ALPHA)
+    artLayer:SetHorizTile(false)
+    artLayer:SetVertTile(false)
+    artLayer:SetTexture(UI_ART_PATH)
+    if not artLayer:GetTexture() then
+        artLayer:SetTexture(UI_ART_PATH_WITH_EXT)
+    end
+    if not artLayer:GetTexture() then
+        artLayer:SetColorTexture(0, 0, 0, 0)
+    end
+    panel:SetScript("OnSizeChanged", function(self, width, height)
+        local contentWidth = artHost:GetWidth()
+        local contentHeight = artHost:GetHeight()
+        if contentWidth <= 1 or contentHeight <= 1 then
+            contentWidth = math.max(1, width - (UI_ART_MARGIN_LEFT + UI_ART_MARGIN_RIGHT))
+            contentHeight = math.max(1, height - (UI_ART_MARGIN_TOP + UI_ART_MARGIN_BOTTOM))
+        end
+        ApplyCoverTexCoords(artLayer, contentWidth, contentHeight, UI_ART_ASPECT_RATIO)
+    end)
+    ApplyCoverTexCoords(
+        artLayer,
+        panel:GetWidth() - (UI_ART_MARGIN_LEFT + UI_ART_MARGIN_RIGHT),
+        panel:GetHeight() - (UI_ART_MARGIN_TOP + UI_ART_MARGIN_BOTTOM),
+        UI_ART_ASPECT_RATIO
+    )
+
+    panel.TitleText:SetText("Blood Elf Restore")
+    -- Keep both globals so legacy macros/scripts keep working after the UI frame rename.
+    _G.BElfRestoreUI = panel
+    _G.BElfVoiceRestoreUI = panel
 
     local subtitle = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    subtitle:SetPoint("TOPLEFT", 16, -34)
-    subtitle:SetWidth(430)
+    subtitle:SetPoint("TOPLEFT", SETTINGS_CONTENT_SIDE_MARGIN + 4, -34)
+    subtitle:SetWidth(SETTINGS_CONTENT_WIDTH - 16)
     subtitle:SetJustifyH("LEFT")
     subtitle:SetText("Controls for restoring TBC Blood Elf voices and first-pass Silvermoon / Eversong music replacement.")
 
-    ui.voiceTabButton = CreateActionButton(panel, 92, 22, "Voice", 16, -60, function()
+    ui.voiceTabButton = CreateActionButton(panel, 92, 22, "Voice", SETTINGS_TAB_START_X, -60, function()
         SetSettingsTab("voice")
     end)
-    ui.musicTabButton = CreateActionButton(panel, 92, 22, "Music", 114, -60, function()
+    ui.musicTabButton = CreateActionButton(panel, 92, 22, "Music", SETTINGS_TAB_START_X + 98, -60, function()
         SetSettingsTab("music")
     end)
 
@@ -1829,7 +1988,7 @@ local function CreateSettingsUI()
 
     ui.statusText = voiceSection:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     ui.statusText:SetPoint("TOPLEFT", statusTitle, "BOTTOMLEFT", 0, -10)
-    ui.statusText:SetWidth(430)
+    ui.statusText:SetWidth(SETTINGS_CONTENT_WIDTH - 16)
     ui.statusText:SetJustifyH("LEFT")
     ui.statusText:SetJustifyV("TOP")
 
@@ -1944,7 +2103,7 @@ local function CreateSettingsUI()
 
     ui.musicStatusText = musicSection:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     ui.musicStatusText:SetPoint("TOPLEFT", musicStatusTitle, "BOTTOMLEFT", 0, -10)
-    ui.musicStatusText:SetWidth(430)
+    ui.musicStatusText:SetWidth(SETTINGS_CONTENT_WIDTH - 16)
     ui.musicStatusText:SetJustifyH("LEFT")
     ui.musicStatusText:SetJustifyV("TOP")
 
@@ -2201,7 +2360,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         CreateSettingsUI()
         ApplyMutes()
         RefreshUI()
-        print("|cffFFD700[BElfVoiceRestore]|r Loaded. Type |cffFFFFFF/belvr|r to open the UI.")
+        print("|cffFFD700[BElfRestore]|r Loaded. Type |cffFFFFFF/belr|r to open the UI (legacy |cffFFFFFF/belvr|r also works).")
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         EvaluateMusicState("entering world", true)
@@ -2254,10 +2413,9 @@ end)
 --  SLASH COMMANDS
 -- ============================================================
 
-SLASH_BELVR1 = "/belvr"
-
-SlashCmdList["BELVR"] = function(input)
-    local cmd = strtrim((input or ""):lower())
+local function HandleSlashCommand(input)
+    local rawInput = input or ""
+    local cmd = strtrim(rawInput:lower())
 
     if cmd == "" or cmd == "ui" or cmd == "config" or cmd == "options" or cmd == "show" then
         ShowSettingsUI()
@@ -2340,6 +2498,35 @@ SlashCmdList["BELVR"] = function(input)
         end
         RefreshUI()
         print("|cff7FD4FF[BElfVR Music]|r Cleared the recorded music trace buffer.")
+
+    elseif cmd == "music note" or strsub(cmd, 1, 11) == "music note " then
+        local noteText = rawInput:match("^%s*[Mm][Uu][Ss][Ii][Cc]%s+[Nn][Oo][Tt][Ee]%s*(.*)$")
+        noteText = strtrim(tostring(noteText or ""))
+        if noteText == "" then
+            noteText = "<none>"
+        end
+        noteText = noteText:gsub("[%c]+", " "):gsub("\"", "'")
+
+        local context = GetMusicContext()
+        local zoneName = context.zoneName ~= "" and context.zoneName or "<none>"
+        local subZoneName = context.subZoneName ~= "" and context.subZoneName or "<none>"
+        local regionName = context.regionKey or "<none>"
+
+        local wrote = AppendMusicTraceLine(
+            "NOTE text=\"" .. noteText ..
+            "\" zone=" .. zoneName ..
+            " subzone=" .. subZoneName ..
+            " region=" .. tostring(regionName)
+        )
+
+        if wrote then
+            if BElfVRDB.musicTraceEnabled then
+                print("|cff7FD4FF[BElfVR Music]|r Added note to music trace.")
+            else
+                print("|cff7FD4FF[BElfVR Music]|r Added note to SavedVariables trace buffer (trace toggle is currently OFF).")
+            end
+        end
+        RefreshUI()
 
     elseif cmd == "music intro on" then
         SetMusicUseIntroEnabled(true)
@@ -2507,43 +2694,51 @@ SlashCmdList["BELVR"] = function(input)
 
     else
         print("|cffFFD700[BElfVR]|r Commands:")
-        print("  |cffFFFFFF/belvr|r                                 open the UI")
-        print("  |cffFFFFFF/belvr on|r / |cffFFFFFF/belvr off|r    enable or disable the addon")
-        print("  |cffFFFFFF/belvr mute on|r / |cffFFFFFF/belvr mute off|r")
+        print("  |cffFFFFFF/belr|r                                  open the UI")
+        print("  |cffFFFFFF/belr on|r / |cffFFFFFF/belr off|r      enable or disable the addon")
+        print("  |cffFFFFFF/belr mute on|r / |cffFFFFFF/belr mute off|r")
         print("                                              toggle muting of new voices")
-        print("  |cffFFFFFF/belvr verbose|r / |cffFFFFFF/belvr verbose on|r / |cffFFFFFF/belvr verbose off|r")
+        print("  |cffFFFFFF/belr verbose|r / |cffFFFFFF/belr verbose on|r / |cffFFFFFF/belr verbose off|r")
         print("                                              toggle or set debug output in chat")
-        print("  |cffFFFFFF/belvr music on|r / |cffFFFFFF/belvr music off|r")
+        print("  |cffFFFFFF/belr music on|r / |cffFFFFFF/belr music off|r")
         print("                                              enable or disable the music replacement system")
-        print("  |cffFFFFFF/belvr music mute on|r / |cffFFFFFF/belvr music mute off|r")
+        print("  |cffFFFFFF/belr music mute on|r / |cffFFFFFF/belr music mute off|r")
         print("                                              toggle muting of tracked Midnight music IDs")
-        print("  |cffFFFFFF/belvr music verbose|r / |cffFFFFFF/belvr music verbose on|r / |cffFFFFFF/belvr music verbose off|r")
+        print("  |cffFFFFFF/belr music verbose|r / |cffFFFFFF/belr music verbose on|r / |cffFFFFFF/belr music verbose off|r")
         print("                                              toggle or set music routing debug output in chat")
-        print("  |cffFFFFFF/belvr music trace on|r / |cffFFFFFF/belvr music trace off|r / |cffFFFFFF/belvr music trace clear|r")
+        print("  |cffFFFFFF/belr music trace on|r / |cffFFFFFF/belr music trace off|r / |cffFFFFFF/belr music trace clear|r")
         print("                                              record music routing lines into SavedVariables for later review")
-        print("  |cffFFFFFF/belvr music intro on|r / |cffFFFFFF/belvr music intro off|r")
+        print("  |cffFFFFFF/belr music note <text>|r")
+        print("                                              add a manual marker line to the music trace buffer")
+        print("  |cffFFFFFF/belr music intro on|r / |cffFFFFFF/belr music intro off|r")
         print("                                              toggle the intro cue when entering the supported region")
-        print("  |cffFFFFFF/belvr music now|r / |cffFFFFFF/belvr music stop|r")
+        print("  |cffFFFFFF/belr music now|r / |cffFFFFFF/belr music stop|r")
         print("                                              force a music re-check or stop injected music")
-        print("  |cffFFFFFF/belvr fallback on|r / |cffFFFFFF/belvr fallback off|r")
+        print("  |cffFFFFFF/belr fallback on|r / |cffFFFFFF/belr fallback off|r")
         print("                                              allow humanoid NPC fallback when race is hidden")
-        print("  |cffFFFFFF/belvr target on|r / |cffFFFFFF/belvr target off|r")
+        print("  |cffFFFFFF/belr target on|r / |cffFFFFFF/belr target off|r")
         print("                                              toggle greet playback on left-click target")
-        print("  |cffFFFFFF/belvr invert|r / |cffFFFFFF/belvr invert on|r / |cffFFFFFF/belvr invert off|r")
+        print("  |cffFFFFFF/belr invert|r / |cffFFFFFF/belr invert on|r / |cffFFFFFF/belr invert off|r")
         print("                                              toggle or set the reversed NPC sex mapping")
-        print("  |cffFFFFFF/belvr suppress|r / |cffFFFFFF/belvr suppress on|r / |cffFFFFFF/belvr suppress off|r")
+        print("  |cffFFFFFF/belr suppress|r / |cffFFFFFF/belr suppress on|r / |cffFFFFFF/belr suppress off|r")
         print("                                              toggle or set native dialog suppression during injected playback")
-        print("  |cffFFFFFF/belvr force male|r / |cffFFFFFF/belvr force female|r / |cffFFFFFF/belvr force clear|r")
+        print("  |cffFFFFFF/belr force male|r / |cffFFFFFF/belr force female|r / |cffFFFFFF/belr force clear|r")
         print("                                              override only the current target's exact NPC GUID")
-        print("  |cffFFFFFF/belvr force-name male|r / |cffFFFFFF/belvr force-name female|r / |cffFFFFFF/belvr force-name clear|r")
+        print("  |cffFFFFFF/belr force-name male|r / |cffFFFFFF/belr force-name female|r / |cffFFFFFF/belr force-name clear|r")
         print("                                              override all matching NPCs by the current target's name")
-        print("  |cffFFFFFF/belvr role military|r / |cffFFFFFF/belvr role noble|r / |cffFFFFFF/belvr role standard|r / |cffFFFFFF/belvr role clear|r")
+        print("  |cffFFFFFF/belr role military|r / |cffFFFFFF/belr role noble|r / |cffFFFFFF/belr role standard|r / |cffFFFFFF/belr role clear|r")
         print("                                              override only the current target's exact NPC GUID")
-        print("  |cffFFFFFF/belvr role-name military|r / |cffFFFFFF/belvr role-name noble|r / |cffFFFFFF/belvr role-name standard|r / |cffFFFFFF/belvr role-name clear|r")
+        print("  |cffFFFFFF/belr role-name military|r / |cffFFFFFF/belr role-name noble|r / |cffFFFFFF/belr role-name standard|r / |cffFFFFFF/belr role-name clear|r")
         print("                                              override all matching NPCs by the current target's name")
-        print("  |cffFFFFFF/belvr status|r                          show current state and loaded sound counts")
-        print("  |cffFFFFFF/belvr test male greet|r / |cffFFFFFF/belvr test male bye|r / |cffFFFFFF/belvr test male pissed|r")
-        print("  |cffFFFFFF/belvr test female greet|r / |cffFFFFFF/belvr test female bye|r / |cffFFFFFF/belvr test female pissed|r")
-        print("  |cffFFFFFF/belvr test music intro|r / |cffFFFFFF/belvr test music day|r / |cffFFFFFF/belvr test music night|r")
+        print("  |cffFFFFFF/belr status|r                           show current state and loaded sound counts")
+        print("  |cffFFFFFF/belr test male greet|r / |cffFFFFFF/belr test male bye|r / |cffFFFFFF/belr test male pissed|r")
+        print("  |cffFFFFFF/belr test female greet|r / |cffFFFFFF/belr test female bye|r / |cffFFFFFF/belr test female pissed|r")
+        print("  |cffFFFFFF/belr test music intro|r / |cffFFFFFF/belr test music day|r / |cffFFFFFF/belr test music night|r")
+        print("  |cffFFFFFF/belvr ...|r                             legacy alias (same command set)")
     end
 end
+
+SLASH_BELR1 = "/belr"
+SLASH_BELVR1 = "/belvr"
+SlashCmdList["BELR"] = HandleSlashCommand
+SlashCmdList["BELVR"] = HandleSlashCommand

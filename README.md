@@ -1,4 +1,4 @@
-# Blood Elf Voice Restore
+# Blood Elf Restore
 
 Version: `0.4.0-alpha`
 
@@ -12,7 +12,7 @@ This addon is still in a very early stage of development. It is not really inten
 
 If that is not your thing, please abstain from low-value or useless comments.
 
-Blood Elf Voice Restore is a World of Warcraft addon for Midnight-era Silvermoon that suppresses selected new Blood Elf NPC voice lines and injects original TBC-era Blood Elf voice sets during NPC interaction events.
+Blood Elf Restore is a World of Warcraft addon for Midnight-era Silvermoon that suppresses selected new Blood Elf NPC voice lines and injects original TBC-era Blood Elf voice sets during NPC interaction events.
 
 It now also includes a broader first-pass Quel'Thalas music layer that mutes tracked Midnight music FileDataIDs and injects old TBC regional music on the music channel.
 
@@ -29,7 +29,7 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
 - Injects region-aware TBC intro/day/night music while you remain in supported Blood Elf music areas
 - Uses shuffle-with-cooldown logic so the same TBC music track is strongly discouraged from repeating too soon
 - Can record music routing traces into SavedVariables for later analysis
-- Exposes an in-game settings and test UI via `/belvr`
+- Exposes an in-game settings and test UI via `/belr`
 
 ## What Currently Works
 
@@ -57,7 +57,8 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
   - `silvermoon`
   - `eversong`
   - `sunstrider`
-  - `ex-ghostlands`
+  - `eversong_south`
+  - `deatholme`
 - The settings UI is now split into separate `Voice` and `Music` tabs
 - Music can optionally play an intro cue on fresh entry, then rotate through day or night pools
 - Music trace recording can be enabled, walked through the city, and saved via `/reload` or logout for later tuning
@@ -75,7 +76,7 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
 - Music replacement is an addon-side approximation, not a true engine-level override of Blizzard's internal zone music resolver
 - The addon cannot reliably read the exact native Midnight music FileDataID currently playing
 - Music transitions are smoother than a hard stop, but they are still limited by what `PlaySoundFile()` and `StopSound()` allow on the addon side
-- Supported-zone continuity for interiors and enclave slices depends on the allow-lists in `BElfVoiceRestore.lua`
+- Supported-zone continuity for interiors and enclave slices depends on the allow-lists in `BElfRestore.lua`
 
 ## Core Design
 
@@ -104,14 +105,14 @@ The music system uses a similar approximation model:
 
 In `0.4.0-alpha`, the music layer also:
 
-- uses region-specific pools for broader Eversong, Sunstrider Isle, and ghostlands-style southern areas
+- uses region-specific pools for broader Eversong, Sunstrider Isle, southern Eversong remastered areas, and a dedicated Deatholme pocket
 - avoids replaying intro cues too often with a separate intro cooldown
 - lets known tracks finish naturally instead of cutting them off with the old coarse timer
-- keeps `/belvr music stop` idle until a real resume trigger occurs
+- keeps `/belr music stop` idle until a real resume trigger occurs
 
 ## Main Files
 
-- `BElfVoiceRestore.lua`
+- `BElfRestore.lua`
   Main logic, UI, event handling, classification, overrides, playback rules.
 - `SoundData.lua`
   New Midnight mute IDs plus TBC male/female voice pools, tracked Midnight music IDs, and TBC music pools.
@@ -122,121 +123,125 @@ In `0.4.0-alpha`, the music layer also:
 
 ## Commands
 
-- `/belvr`
+- `/belr`
   Open the UI.
+- Legacy alias:
+  - `/belvr` runs the same command set for backward compatibility.
 
 General addon power:
-- `/belvr on`
+- `/belr on`
   Turns the addon on.
-- `/belvr off`
+- `/belr off`
   Turns the addon off and stops its replacement behavior.
-- `/belvr status`
+- `/belr status`
   Prints the addon's current settings and loaded counts in chat.
 
 Voice muting and voice debug:
-- `/belvr mute on`
+- `/belr mute on`
   Turns on muting for the tracked new Midnight Blood Elf voice lines.
-- `/belvr mute off`
+- `/belr mute off`
   Restores the tracked new Midnight Blood Elf voice lines.
-- `/belvr verbose`
+- `/belr verbose`
   Toggles detailed voice debug messages in chat.
-- `/belvr verbose on`
+- `/belr verbose on`
   Forces detailed voice debug messages on.
-- `/belvr verbose off`
+- `/belr verbose off`
   Forces detailed voice debug messages off.
 
 Voice detection and behavior:
-- `/belvr fallback on`
+- `/belr fallback on`
   Allows the addon to use its backup humanoid check when Blizzard hides NPC race data.
-- `/belvr fallback off`
+- `/belr fallback off`
   Disables that backup humanoid check.
-- `/belvr target on`
+- `/belr target on`
   Plays a greet when you left-click and target a supported NPC.
-- `/belvr target off`
+- `/belr target off`
   Disables left-click target greet playback.
-- `/belvr invert`
+- `/belr invert`
   Toggles the male/female voice swap used when Blizzard reports NPC sex backwards.
-- `/belvr invert on`
+- `/belr invert on`
   Forces the male/female voice swap on.
-- `/belvr invert off`
+- `/belr invert off`
   Forces the male/female voice swap off.
-- `/belvr suppress`
+- `/belr suppress`
   Toggles temporary native dialog suppression during injected voice playback.
-- `/belvr suppress on`
+- `/belr suppress on`
   Forces native dialog suppression on.
-- `/belvr suppress off`
+- `/belr suppress off`
   Forces native dialog suppression off.
 
 Manual voice fixes for the NPC you are targeting:
-- `/belvr force male`
+- `/belr force male`
   Forces the current target to use male voice playback.
-- `/belvr force female`
+- `/belr force female`
   Forces the current target to use female voice playback.
-- `/belvr force clear`
+- `/belr force clear`
   Clears the exact-target gender override.
-- `/belvr role military`
+- `/belr role military`
   Forces the current target into the military voice pool.
-- `/belvr role noble`
+- `/belr role noble`
   Forces the current target into the noble voice pool.
-- `/belvr role standard`
+- `/belr role standard`
   Forces the current target into the standard voice pool.
-- `/belvr role clear`
+- `/belr role clear`
   Clears the exact-target role override.
 
 Manual voice fixes for every NPC with the same visible name:
-- `/belvr force-name male`
+- `/belr force-name male`
   Forces all NPCs with the current target's name to use male voice playback.
-- `/belvr force-name female`
+- `/belr force-name female`
   Forces all NPCs with the current target's name to use female voice playback.
-- `/belvr force-name clear`
+- `/belr force-name clear`
   Clears the name-wide gender override.
-- `/belvr role-name military`
+- `/belr role-name military`
   Forces all NPCs with the current target's name into the military voice pool.
-- `/belvr role-name noble`
+- `/belr role-name noble`
   Forces all NPCs with the current target's name into the noble voice pool.
-- `/belvr role-name standard`
+- `/belr role-name standard`
   Forces all NPCs with the current target's name into the standard voice pool.
-- `/belvr role-name clear`
+- `/belr role-name clear`
   Clears the name-wide role override.
 
 Music controls:
-- `/belvr music on`
+- `/belr music on`
   Turns the music replacement system on.
-- `/belvr music off`
+- `/belr music off`
   Turns the music replacement system off.
-- `/belvr music mute on`
+- `/belr music mute on`
   Mutes the tracked Midnight music IDs used by the music replacement layer.
-- `/belvr music mute off`
+- `/belr music mute off`
   Restores the tracked Midnight music IDs.
-- `/belvr music verbose`
+- `/belr music verbose`
   Toggles detailed music routing messages in chat.
-- `/belvr music verbose on`
+- `/belr music verbose on`
   Forces detailed music routing messages on.
-- `/belvr music verbose off`
+- `/belr music verbose off`
   Forces detailed music routing messages off.
-- `/belvr music intro on`
+- `/belr music intro on`
   Makes the addon play the intro music cue when entering the supported music region.
-- `/belvr music intro off`
+- `/belr music intro off`
   Disables that intro-on-entry cue.
-- `/belvr music now`
+- `/belr music now`
   Forces the addon to re-check your current area and refresh music logic immediately.
-- `/belvr music stop`
+- `/belr music stop`
   Stops the currently injected addon music and clears the music state.
 
 Music trace recording:
-- `/belvr music trace on`
+- `/belr music trace on`
   Starts recording music routing and playback lines into SavedVariables for later review.
-- `/belvr music trace off`
+- `/belr music trace off`
   Stops recording the music trace.
-- `/belvr music trace clear`
+- `/belr music trace clear`
   Clears the saved music trace buffer.
+- `/belr music note <text>`
+  Adds a manual trace marker line with your note plus current zone/subzone/region context.
 
 Music test playback:
-- `/belvr test music intro`
+- `/belr test music intro`
   Plays the configured intro music track for testing.
-- `/belvr test music day`
+- `/belr test music day`
   Plays one of the configured daytime music tracks for testing.
-- `/belvr test music night`
+- `/belr test music night`
   Plays one of the configured nighttime music tracks for testing.
 
 ## UI Controls
@@ -275,6 +280,7 @@ Music test playback:
 - Role classification still uses name heuristics for many NPCs.
 - The role-pool slicing logic depends on the exact list order in `SoundData.lua`.
 - Legacy `genderOverrides` and `roleOverrides` are migrated once into a backup field, then reset in favor of GUID-based overrides.
+- To reduce stubborn double-music leaks from unknown Midnight IDs, replacement playback now calls `StopMusic()` first; this can make some transitions feel more abrupt.
 - The music trace recorder does not create a standalone text file. It writes into SavedVariables, which WoW flushes to disk on `/reload` or logout.
 - Large trace captures should be done in a single pass and then cleared; the recorder keeps a capped ring buffer, not an infinite log.
 
@@ -298,7 +304,9 @@ This project is released under the MIT License. See [LICENSE](C:\Program Files (
 2. Test right-click greet and gossip close bye.
 3. Test target-loss bye after a short delay.
 4. Test male and female NPCs after `/reload`.
-5. Test `/belvr force ...` and `/belvr force-name ...` on known problematic NPCs.
+5. Test `/belr force ...` and `/belr force-name ...` on known problematic NPCs.
 6. Test with verbose logging enabled when adding new mute IDs or overrides.
-7. Test `/belvr music verbose on` while walking between Silvermoon subzones and interiors.
-8. Test `/belvr music trace on`, then `/reload`, and inspect the SavedVariables trace for unexpected zone names or missing allow-list entries.
+7. Test `/belr music verbose on` while walking between Silvermoon subzones and interiors.
+8. Test `/belr music trace on`, run southern Eversong routes, then `/reload`, and inspect the SavedVariables trace for unexpected zone names or missing allow-list entries.
+9. During fast flying passes, use `/belr music note <text>` at the exact moment you hear a leak so the trace has a searchable marker.
+

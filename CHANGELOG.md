@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Rebranded visible addon naming from `Blood Elf Voice Restore` to `Blood Elf Restore`.
+- Renamed main addon script from `BElfVoiceRestore.lua` to `BElfRestore.lua` and updated TOC load order.
+- Switched primary slash command docs/UI prompts to `/belr` while keeping `/belvr` as a legacy alias.
+- Renamed the legacy southern music routing label from `ghostlands` to `eversong_south` to match Midnight-era zone reality.
+- Added a dedicated `deatholme` music region so `Ruins of Deatholme` no longer shares the full southern random pool.
+- Added legacy compatibility so custom `SoundData.lua` packs that still define `ghostlands` are treated as `eversong_south`.
+- Added `/belr music note <text>` to write manual zone/subzone/region marker lines into the trace buffer.
+- Added a `StopMusic()` pre-playback reset before replacement music starts to reduce native Midnight overlap in leak-prone pockets.
+
 ## 0.4.0-alpha
 
 - Expanded music routing from a basic Silvermoon-only layer into broader region families:
@@ -17,9 +28,9 @@
 - Fixed startup double-play on login by moving initial music startup to `PLAYER_ENTERING_WORLD` only.
 - Added live handling for WoW's global music toggle (`Ctrl+M`), including clean resume behavior when music is re-enabled.
 - Fixed scheduler behavior while WoW music output is disabled so it no longer burns shuffle state selecting tracks that cannot play.
-- Added a real manual-stop hold state for `/belvr music stop`, so it no longer immediately auto-resumes on the next periodic tick.
+- Added a real manual-stop hold state for `/belr music stop`, so it no longer immediately auto-resumes on the next periodic tick.
 - Fixed slash-command music test playback so it now uses the same region-aware pool selection as the live music system.
-- Improved slash-command feedback for `/belvr music on` so it reports when the music system is only armed because the master addon switch is still off.
+- Improved slash-command feedback for `/belr music on` so it reports when the music system is only armed because the master addon switch is still off.
 - Reworked the settings UI into separate `Voice` and `Music` tabs instead of one long stacked control panel.
 - Adjusted tab layout spacing to avoid overlap between the tab buttons and the first controls in each section.
 - Kept the known limitation that `Ctrl+M` fade-out still depends on Blizzard's own music channel behavior and may remain abrupt.
@@ -45,7 +56,7 @@
 ## 0.2.1-alpha
 
 - Fixed addon load detection by aligning TOC and addon name with the folder name.
-- Added `/belvr` UI with runtime toggles, status display, and test playback controls.
+- Added `/belr` UI with runtime toggles, status display, and test playback controls.
 - Added left-click greet playback on `PLAYER_TARGET_CHANGED`.
 - Added greet dedupe so right-click gossip does not immediately double-play after target-select.
 - Added target-loss bye playback when switching away from a recently greeted target.
@@ -80,3 +91,4 @@
 - Consider exposing music timing values in the UI once the zone map stabilizes.
 - Consider one-time migration cleanup for legacy saved variables instead of clearing them every load.
 - Replace placeholder TOC metadata before any public release.
+

@@ -1,6 +1,6 @@
 ## Interface: 120001
 ## Interface-Mainline: 120001
-## Title: |cffFFD700Blood Elf|r Voice Restore
+## Title: |cffFFD700Blood Elf|r Restore
 ## Notes: Restores TBC-era Blood Elf voices and first-pass Silvermoon / Eversong music while muting tracked Midnight replacements
 ## Author: sys01 and Codex 5.3
 ## Version: 0.4.0-alpha
@@ -8,4 +8,4 @@
 ## X-BuildVersion: 66198
 
 SoundData.lua
-BElfVoiceRestore.lua
+BElfRestore.lua

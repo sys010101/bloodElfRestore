@@ -1,5 +1,5 @@
 -- ============================================================
---  BElfVoiceRestore - SoundData.lua
+--  BElfRestore - SoundData.lua
 --  All FileDataIDs are sourced from wow.tools (build 66198)
 --
 --  HOW TO POPULATE:
@@ -13,7 +13,7 @@
 --  - The addon splits the TBC greet tables into role pools by position:
 --    noble block first, then standard block, then military block.
 --  - Inside each role block, vendor lines should stay together and greeting lines should stay together.
---  - If you add/remove/reorder entries in the TBC tables, also update the role layout offsets in BElfVoiceRestore.lua.
+--  - If you add/remove/reorder entries in the TBC tables, also update the role layout offsets in BElfRestore.lua.
 --  - To add new Midnight mute IDs, append them to BElfVR_NewVoiceIDs.
 --  - To add new TBC sounds, append them to the matching male/female table in the correct subgroup.
 -- ============================================================
@@ -255,6 +255,9 @@ BElfVR_NewMusicIDs = {
     7698302, -- mus_120_lightbloom_harandar_e
     7698304, -- mus_120_lightbloom_harandar_f
     7698306, -- mus_120_lightbloom_harandar_h
+
+    -- Southern corridor leak tracking (Amani Pass / Ruins of Deatholme):
+    -- Append only IDs that are verified from focused trace + datamine sessions.
 }
 
 
@@ -269,7 +272,7 @@ BElfVR_NewMusicIDs = {
 --
 --  CHANGE WITH CARE:
 --  - The `intro`, `day`, and `night` categories are used directly
---  - by the code in BElfVoiceRestore.lua.
+--  - by the code in BElfRestore.lua.
 --  - Renaming these keys will break playback logic.
 -- ============================================================
 BElfVR_TBCMusic = {
@@ -296,13 +299,17 @@ BElfVR_TBCMusic = {
 --  back to the legacy `BElfVR_TBCMusic` table above.
 --
 --  SAFE TO CHANGE:
---  - Add verified IDs to the empty `eversong` or `ghostlands`
+--  - Add verified IDs to the empty `eversong`, `eversong_south`,
+--    or `deatholme`
 --    buckets as you map Midnight-era Quel'Thalas.
 --  - You may also override `silvermoon` explicitly if you want
 --    different behavior than the legacy fallback table.
 --
 --  DO NOT RENAME THE REGION KEYS:
---  - The code expects `silvermoon`, `eversong`, `sunstrider`, and `ghostlands`.
+--  - The code expects `silvermoon`, `eversong`, `sunstrider`,
+--    `eversong_south`, and `deatholme`.
+--  - Legacy compatibility: if a custom pack still uses `ghostlands`,
+--    the addon treats it as `eversong_south`.
 -- ============================================================
 BElfVR_TBCMusicRegions = {
     silvermoon = {
@@ -361,13 +368,12 @@ BElfVR_TBCMusicRegions = {
             53485, -- ES_SunstriderWalkNight03
         },
     },
-    ghostlands = {
-        -- A neutral scenic lead-in for the darker southern / haunted region.
+    eversong_south = {
+        -- A neutral scenic lead-in for Midnight's southern Eversong corridor.
         intro = {
             53513, -- GL_ScenicWalkUni01
         },
-        -- Daytime ghostlands-style pool for the Tranquillien corridor and
-        -- surrounding haunted / damaged areas.
+        -- Daytime southern-Eversong pool for Tranquillien and nearby subzones.
         day = {
             53499, -- GL_EversongDarkWalkUni01
             53500, -- GL_EversongDarkWalkUni02
@@ -384,7 +390,7 @@ BElfVR_TBCMusicRegions = {
             53517, -- GL_ShalandisWalkUni02
             53518, -- GL_ShalandisWalkUni03
         },
-        -- Nighttime ghostlands-style pool.
+        -- Nighttime southern-Eversong pool.
         night = {
             53499, -- GL_EversongDarkWalkUni01
             53500, -- GL_EversongDarkWalkUni02
@@ -402,6 +408,22 @@ BElfVR_TBCMusicRegions = {
             53516, -- GL_ShalandisWalkUni01
             53517, -- GL_ShalandisWalkUni02
             53518, -- GL_ShalandisWalkUni03
+        },
+    },
+    deatholme = {
+        -- Dedicated Ruins of Deatholme routing: keep this intentionally narrow.
+        intro = {
+            53513, -- GL_ScenicWalkUni01
+        },
+        day = {
+            53502, -- GL_EversongDarkWalkUni04
+            53503, -- GL_Forest1WalkDay01
+            53509, -- GL_Forest3WalkDay01
+        },
+        night = {
+            53510, -- GL_Forest3WalkNight01
+            53511, -- GL_Forest3WalkNight02
+            53512, -- GL_Forest3WalkNight03
         },
     },
 }
@@ -667,3 +689,4 @@ BElfVR_TBCVoices_Female = {
         556829, -- NPCBloodElfFemaleMilitaryPissed09.ogg
     },
 }
+

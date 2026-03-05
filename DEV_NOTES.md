@@ -1,4 +1,4 @@
-# Blood Elf Voice Restore - Dev Notes
+# Blood Elf Restore - Dev Notes
 
 ## Current Purpose
 
@@ -7,7 +7,7 @@ Current working version:
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Silvermoon while muting the newer Midnight replacement voice set.
 
-It also now includes a broader first-pass music replacement layer for `Silvermoon City`, `Eversong Woods`, `Sunstrider Isle`, and ghostlands-style southern remastered subzones that can mute tracked Midnight music FileDataIDs and inject old TBC music on the music channel.
+It also now includes a broader first-pass music replacement layer for `Silvermoon City`, `Eversong Woods`, `Sunstrider Isle`, southern Eversong remastered subzones, and a dedicated `Ruins of Deatholme` pocket that can mute tracked Midnight music FileDataIDs and inject old TBC music on the music channel.
 
 Main behavior:
 - Mutes tracked Midnight Blood Elf voice FileDataIDs from `SoundData.lua`
@@ -27,7 +27,7 @@ Main behavior:
   - Holds all old TBC male/female voice FileDataIDs
   - Holds tracked Midnight music mute IDs
   - Holds TBC Silvermoon intro/day/night music FileDataIDs
-- `BElfVoiceRestore.lua`
+- `BElfRestore.lua`
   - Main addon logic
   - UI
   - Target/gossip event handling
@@ -48,7 +48,8 @@ Main behavior:
 ### UI Added
 
 The addon now has an in-game UI window opened with:
-- `/belvr`
+- `/belr`
+- Legacy alias: `/belvr` still maps to the same handler.
 
 Current UI includes:
 - `Voice` and `Music` tabs instead of one long control stack
@@ -120,35 +121,35 @@ Current built-in defaults:
   - role: `standard`
 
 Manual override commands still exist:
-- `/belvr force male`
-- `/belvr force female`
-- `/belvr force clear`
-- `/belvr role military`
-- `/belvr role noble`
-- `/belvr role standard`
-- `/belvr role clear`
+- `/belr force male`
+- `/belr force female`
+- `/belr force clear`
+- `/belr role military`
+- `/belr role noble`
+- `/belr role standard`
+- `/belr role clear`
 
 Important:
-- `/belvr force ...` and `/belvr role ...` now apply to the current target's full unit `GUID`
+- `/belr force ...` and `/belr role ...` now apply to the current target's full unit `GUID`
 - This is intentional because Midnight can reuse the same `npc=...` ID across different actual NPCs
 - Legacy saved `npc=...` overrides are migrated once into `BElfVRDB.legacyOverrideBackup`, then cleared so old bad mappings do not keep applying
 
 New name-wide override commands also exist:
-- `/belvr force-name male`
-- `/belvr force-name female`
-- `/belvr force-name clear`
-- `/belvr invert`
-- `/belvr invert on`
-- `/belvr invert off`
-- `/belvr suppress`
-- `/belvr suppress on`
-- `/belvr suppress off`
-- `/belvr role-name military`
-- `/belvr role-name noble`
-- `/belvr role-name standard`
-- `/belvr role-name clear`
-- `/belvr verbose on`
-- `/belvr verbose off`
+- `/belr force-name male`
+- `/belr force-name female`
+- `/belr force-name clear`
+- `/belr invert`
+- `/belr invert on`
+- `/belr invert off`
+- `/belr suppress`
+- `/belr suppress on`
+- `/belr suppress off`
+- `/belr role-name military`
+- `/belr role-name noble`
+- `/belr role-name standard`
+- `/belr role-name clear`
+- `/belr verbose on`
+- `/belr verbose off`
 
 These apply to every NPC that shares the current target's displayed name, which helps when
 Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
@@ -177,13 +178,15 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - `silvermoon`
   - `eversong`
   - `sunstrider`
-  - `ghostlands`
+  - `eversong_south`
+  - `deatholme`
 - Supported subzone fallback and override routing now includes:
   - `The Bazaar`
   - `Sunstrider Isle`
   - `Tranquillien`
   - `Sanctum of the Moon`
-  - several southern / haunted remastered subzones mapped into the `ghostlands` family
+  - several southern remastered subzones mapped into the `eversong_south` family
+  - `Ruins of Deatholme` mapped into the dedicated `deatholme` family
 - The music system checks:
   - zone changes
   - indoor-like subzone changes
@@ -195,10 +198,12 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
 - Long stays in the same supported area still have fallback periodic rotation for unknown-duration cases
 - The music shuffle system keeps recently played TBC tracks on a cooldown so the same track does not immediately repeat
 - Playback routing now keys off a stable region + day/night signature instead of tiny subzone churn, which greatly reduces constant restarts while moving around Silvermoon
+- Replacement playback now issues `StopMusic()` before `PlaySoundFile(..., "Music")` as a last-resort native-channel reset for stubborn overlap pockets
 - Music stop transitions currently use a longer fade than the first pass to reduce abrupt cutoffs when area routing changes
 - Music debug output now indicates whether the current area was matched by zone name or by subzone allow-list
-- `/belvr music stop` now creates a real manual stop state and stays idle until a meaningful resume trigger occurs
+- `/belr music stop` now creates a real manual stop state and stays idle until a meaningful resume trigger occurs
 - Slash music test commands now use the same region-aware pool selection as the live music system
+- `/belr music note <text>` adds a one-line manual marker into `musicTraceLog` with current zone/subzone/region context (useful during high-speed flight mapping)
 - Music trace recording can capture:
   - context changes
   - support source (zone vs subzone)
@@ -224,7 +229,7 @@ Fix applied:
 
 Important:
 - This split depends on the current ordering in `SoundData.lua`
-- If the TBC sound lists are reordered, the layout offsets in `BElfVoiceRestore.lua` must also be updated
+- If the TBC sound lists are reordered, the layout offsets in `BElfRestore.lua` must also be updated
 
 ## Community Configuration Notes
 
@@ -256,11 +261,11 @@ Inside each role block:
 - keep greeting lines together
 
 If that ordering changes, update the role layout tables in:
-- `BElfVoiceRestore.lua`
+- `BElfRestore.lua`
 
 ### Where To Add Built-In Automatic Fixes
 
-In `BElfVoiceRestore.lua`:
+In `BElfRestore.lua`:
 
 - `DEFAULT_GENDER_OVERRIDES`
   - For known NPC IDs with wrong client-reported gender
@@ -316,7 +321,7 @@ In `BElfVoiceRestore.lua`:
 
 ## Session Update (2026-03-05)
 
-Low-risk cleanup pass applied in `BElfVoiceRestore.lua` after review triage:
+Low-risk cleanup pass applied in `BElfRestore.lua` after review triage:
 
 - Removed unused `local addon = {}` declaration near the top of the file.
 - Removed dead fallback-zone entry `["zul'aman"] = false` from `BLOOD_ELF_FALLBACK_ZONES`.
@@ -327,3 +332,17 @@ Low-risk cleanup pass applied in `BElfVoiceRestore.lua` after review triage:
 Notes:
 - No behavior-changing refactors were done in this pass.
 - Potential larger refactors (voice pool structural enforcement, trace-buffer internals) remain optional and were intentionally deferred.
+
+## Session Update (2026-03-05 - Southern Routing Stabilization)
+
+Implemented a focused music-routing and trace tooling pass:
+
+- Replaced active southern routing semantics from `ghostlands` to `eversong_south`.
+- Added dedicated `deatholme` routing for `Ruins of Deatholme` with a narrow dark pool.
+- Added compatibility handling so legacy `BElfVR_TBCMusicRegions.ghostlands` data is still consumed as `eversong_south`.
+- Added `/belr music note <text>` to write manual markers into the SavedVariables music trace with current zone/subzone/region context.
+- Updated docs and in-game help text for the new routing names and command.
+
+Data note:
+- No speculative Midnight mute IDs were added in this pass. Native leak spots are still expected to require additional verified IDs from future focused trace/datamine passes.
+
