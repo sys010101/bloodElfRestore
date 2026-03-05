@@ -22,3 +22,7 @@ desktop.ini
 
 # Lua bytecode or tooling output if generated locally
 *.luac
+
+# Local datamine scratch files
+listfile.csv
+_zonemusic_folders.txt

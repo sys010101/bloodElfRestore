@@ -307,7 +307,7 @@ BElfVR_TBCMusic = {
 --
 --  DO NOT RENAME THE REGION KEYS:
 --  - The code expects `silvermoon`, `eversong`, `sunstrider`,
---    `eversong_south`, and `deatholme`.
+--    `eversong_south`, `deatholme`, and `amani`.
 --  - Legacy compatibility: if a custom pack still uses `ghostlands`,
 --    the addon treats it as `eversong_south`.
 -- ============================================================
@@ -371,7 +371,8 @@ BElfVR_TBCMusicRegions = {
     eversong_south = {
         -- A neutral scenic lead-in for Midnight's southern Eversong corridor.
         intro = {
-            53513, -- GL_ScenicWalkUni01
+            53514, -- GL_ScenicWalkUni02
+            53515, -- GL_ScenicWalkUni03
         },
         -- Daytime southern-Eversong pool for Tranquillien and nearby subzones.
         day = {
@@ -383,7 +384,6 @@ BElfVR_TBCMusicRegions = {
             53504, -- GL_Forest1WalkDay02
             53506, -- GL_Forest2WalkDay01
             53509, -- GL_Forest3WalkDay01
-            53513, -- GL_ScenicWalkUni01
             53514, -- GL_ScenicWalkUni02
             53515, -- GL_ScenicWalkUni03
             53516, -- GL_ShalandisWalkUni01
@@ -402,7 +402,6 @@ BElfVR_TBCMusicRegions = {
             53510, -- GL_Forest3WalkNight01
             53511, -- GL_Forest3WalkNight02
             53512, -- GL_Forest3WalkNight03
-            53513, -- GL_ScenicWalkUni01
             53514, -- GL_ScenicWalkUni02
             53515, -- GL_ScenicWalkUni03
             53516, -- GL_ShalandisWalkUni01
@@ -411,19 +410,48 @@ BElfVR_TBCMusicRegions = {
         },
     },
     deatholme = {
-        -- Dedicated Ruins of Deatholme routing: keep this intentionally narrow.
+        -- Dedicated Ruins of Deatholme routing: keep this intentionally dark.
         intro = {
-            53513, -- GL_ScenicWalkUni01
+            53510, -- GL_Forest3WalkNight01
+            53512, -- GL_Forest3WalkNight03
         },
         day = {
+            53499, -- GL_EversongDarkWalkUni01
+            53500, -- GL_EversongDarkWalkUni02
+            53501, -- GL_EversongDarkWalkUni03
             53502, -- GL_EversongDarkWalkUni04
-            53503, -- GL_Forest1WalkDay01
-            53509, -- GL_Forest3WalkDay01
         },
         night = {
+            53507, -- GL_Forest2WalkNight01
+            53508, -- GL_Forest2WalkNight02
             53510, -- GL_Forest3WalkNight01
             53511, -- GL_Forest3WalkNight02
             53512, -- GL_Forest3WalkNight03
+        },
+    },
+    amani = {
+        -- Old TBC Zul'Aman ambient family for Amani / Zeb ruins routing.
+        -- Verified FileDataIDs from wowdev/wow-listfile (202603051942):
+        -- ZA_zulaman_AMB10..15 -> 53825..53830
+        intro = {
+            53828, -- ZA_zulaman_AMB13
+            53829, -- ZA_zulaman_AMB14
+        },
+        day = {
+            53825, -- ZA_zulaman_AMB10
+            53826, -- ZA_zulaman_AMB11
+            53827, -- ZA_zulaman_AMB12
+            53828, -- ZA_zulaman_AMB13
+            53829, -- ZA_zulaman_AMB14
+            53830, -- ZA_zulaman_AMB15
+        },
+        night = {
+            53825, -- ZA_zulaman_AMB10
+            53826, -- ZA_zulaman_AMB11
+            53827, -- ZA_zulaman_AMB12
+            53828, -- ZA_zulaman_AMB13
+            53829, -- ZA_zulaman_AMB14
+            53830, -- ZA_zulaman_AMB15
         },
     },
 }

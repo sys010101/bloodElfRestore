@@ -62,6 +62,10 @@ local MUSIC_REPEAT_COOLDOWN = 180
 local MUSIC_INTRO_REPEAT_COOLDOWN = 600
 local MUSIC_TRANSITION_FADE_MS = 900
 local MUSIC_FORCE_STOP_NATIVE_BEFORE_REPLACEMENT = true
+local MUSIC_NATIVE_GUARD_INTERVAL = 2.5
+local MUSIC_PLAYBACK_CHANNEL = "Master"
+local MUSIC_SUPPRESS_NATIVE_WITH_VOLUME = true
+local MUSIC_NATIVE_SUPPRESS_VOLUME = 0
 local MUSIC_END_GRACE_SECONDS = 0.5
 local MUSIC_DAY_START_HOUR = 6
 local MUSIC_NIGHT_START_HOUR = 18
@@ -121,6 +125,7 @@ local MUSIC_REGION_EVERSONG = "eversong"
 local MUSIC_REGION_SUNSTRIDER = "sunstrider"
 local MUSIC_REGION_EVERSONG_SOUTH = "eversong_south"
 local MUSIC_REGION_DEATHOLME = "deatholme"
+local MUSIC_REGION_AMANI = "amani"
 local MUSIC_REGION_LEGACY_GHOSTLANDS = "ghostlands"
 
 local function NormalizeMusicRegionKey(regionKey)
@@ -138,7 +143,7 @@ end
 -- - Add lowercase subzone names here as you confirm they should
 --   borrow a different regional music family.
 local MUSIC_SUBZONE_REGION_OVERRIDES = {
-    ["amani pass"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["amani pass"] = MUSIC_REGION_AMANI,
     ["daggerspine landing"] = MUSIC_REGION_EVERSONG_SOUTH,
     ["daggerspine point"] = MUSIC_REGION_EVERSONG_SOUTH,
     ["farstrider enclave"] = MUSIC_REGION_EVERSONG_SOUTH,
@@ -149,10 +154,11 @@ local MUSIC_SUBZONE_REGION_OVERRIDES = {
     ["sunstrider isle"] = MUSIC_REGION_SUNSTRIDER,
     ["suncrown village"] = MUSIC_REGION_EVERSONG_SOUTH,
     ["thalassian pass"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["thalassian range"] = MUSIC_REGION_EVERSONG_SOUTH,
     ["windrunner spire"] = MUSIC_REGION_EVERSONG_SOUTH,
     ["windrunner village"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["zeb'nowa"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["zeb'tela ruins"] = MUSIC_REGION_EVERSONG_SOUTH,
+    ["zeb'nowa"] = MUSIC_REGION_AMANI,
+    ["zeb'tela ruins"] = MUSIC_REGION_AMANI,
 }
 
 
@@ -222,6 +228,9 @@ local state = {
     musicUpdateAccumulator = 0,
     musicIntroPending = false,
     musicManualStop = false,
+    musicLastNativeStopAt = 0,
+    musicNativeVolumeForced = false,
+    musicNativeVolumeBackup = nil,
 }
 
 local ui = {
@@ -519,6 +528,16 @@ local function GetMusicTrackPool(regionKey, poolName)
         return regionPool, canonicalRegionKey
     end
 
+    -- If an explicit Amani bucket is missing in a custom pack, fall back to
+    -- broader southern-Eversong routing so playback still works.
+    if canonicalRegionKey == MUSIC_REGION_AMANI and BElfVR_TBCMusicRegions then
+        local southRegionData = BElfVR_TBCMusicRegions[MUSIC_REGION_EVERSONG_SOUTH]
+        local southRegionPool = southRegionData and southRegionData[poolName]
+        if southRegionPool and #southRegionPool > 0 then
+            return southRegionPool, MUSIC_REGION_EVERSONG_SOUTH
+        end
+    end
+
     -- If a custom pack has not added dedicated Deatholme buckets yet,
     -- fall back to the broader southern-Eversong family first.
     if canonicalRegionKey == MUSIC_REGION_DEATHOLME and BElfVR_TBCMusicRegions then
@@ -580,9 +599,13 @@ local function GetMusicContext()
     local isNight = IsNightTimeForMusic()
     local isIndoor = (subZoneKey ~= "" and subZoneKey ~= zoneKey)
     local regionKey = NormalizeMusicRegionKey(MUSIC_SUBZONE_REGION_OVERRIDES[subZoneKey])
+    local looksLikeAmani = (strfind(subZoneKey, "amani", 1, true) ~= nil)
+        or (strfind(subZoneKey, "zeb'", 1, true) ~= nil)
 
     if regionKey then
         -- Explicit subzone override wins.
+    elseif looksLikeAmani then
+        regionKey = MUSIC_REGION_AMANI
     elseif zoneKey == "eversong woods" then
         regionKey = MUSIC_REGION_EVERSONG
     elseif zoneKey == "silvermoon city" or zoneKey == "sanctum of light" then
@@ -624,6 +647,70 @@ local function StopInjectedMusic(fadeOutMS)
     state.musicExpectedEndTime = 0
 end
 
+local function SetNativeMusicVolumeSuppressed(shouldSuppress, reason)
+    if not (MUSIC_SUPPRESS_NATIVE_WITH_VOLUME and SetCVar and GetCVar) then
+        return
+    end
+
+    local currentVolume = GetCVar("Sound_MusicVolume")
+    if shouldSuppress then
+        if not state.musicNativeVolumeForced then
+            state.musicNativeVolumeBackup = currentVolume
+            state.musicNativeVolumeForced = true
+            LogMusic("Temporarily forcing native music volume to 0 while replacement music is active.")
+            RecordMusicTrace("Forced Sound_MusicVolume=0 reason=" .. tostring(reason or "update"))
+        end
+
+        if tonumber(currentVolume or "") ~= MUSIC_NATIVE_SUPPRESS_VOLUME then
+            SetCVar("Sound_MusicVolume", tostring(MUSIC_NATIVE_SUPPRESS_VOLUME))
+        end
+        return
+    end
+
+    if not state.musicNativeVolumeForced then
+        return
+    end
+
+    local restoreValue = state.musicNativeVolumeBackup
+    state.musicNativeVolumeForced = false
+    state.musicNativeVolumeBackup = nil
+
+    if restoreValue ~= nil then
+        SetCVar("Sound_MusicVolume", tostring(restoreValue))
+    end
+
+    LogMusic("Restored native music volume after leaving replacement-music control.")
+    RecordMusicTrace("Restored Sound_MusicVolume reason=" .. tostring(reason or "update"))
+end
+
+-- Some Midnight tracks can restart underneath injected playback even
+-- after one-time muting/stop calls. While replacement music is active,
+-- issue periodic native-channel stops. Injected music is played on
+-- `MUSIC_PLAYBACK_CHANNEL` so this native guard does not cut our own track.
+local function EnforceNativeMusicSuppression(reason, forceNow)
+    if not (MUSIC_FORCE_STOP_NATIVE_BEFORE_REPLACEMENT and StopMusic) then
+        return
+    end
+
+    local now = GetTime()
+    if not forceNow then
+        local elapsed = now - (state.musicLastNativeStopAt or 0)
+        if elapsed < MUSIC_NATIVE_GUARD_INTERVAL then
+            return
+        end
+    end
+
+    StopMusic()
+    state.musicLastNativeStopAt = now
+
+    if forceNow then
+        LogMusic("Issued StopMusic() native guard [" .. tostring(reason or "update") .. "].")
+        RecordMusicTrace("Issued StopMusic native guard reason=" .. tostring(reason or "update"))
+    else
+        LogMusic("Issued periodic StopMusic() native guard pulse.")
+    end
+end
+
 local function ResetMusicState(stopPlayback)
     if stopPlayback then
         StopInjectedMusic(MUSIC_TRANSITION_FADE_MS)
@@ -642,6 +729,8 @@ local function ResetMusicState(stopPlayback)
     state.musicUpdateAccumulator = 0
     state.musicIntroPending = false
     state.musicLastGlobalMusicEnabled = nil
+    state.musicLastNativeStopAt = 0
+    SetNativeMusicVolumeSuppressed(false, "reset")
 end
 
 -- If the track should already be over based on its known duration,
@@ -753,29 +842,23 @@ end
 
 local function PlayMusicTrack(fileDataID, poolName, reason)
     if not fileDataID then
-        return
+        return false
     end
     if not IsGlobalMusicEnabled() then
         LogMusic("Skipping replacement music because WoW music output is disabled.")
         RecordMusicTrace("Skipped playback because WoW music output is disabled.")
-        return
+        return false
     end
 
-    if MUSIC_FORCE_STOP_NATIVE_BEFORE_REPLACEMENT and StopMusic then
-        -- Native Blizzard music can still leak in some pockets where IDs are unknown.
-        -- StopMusic() is used as a last-resort channel reset before replacement playback.
-        StopMusic()
-        LogMusic("Issued StopMusic() before replacement playback to clear native channel state.")
-        RecordMusicTrace("Issued StopMusic before replacement playback.")
-    end
+    EnforceNativeMusicSuppression("before replacement playback", true)
 
     StopInjectedMusic(MUSIC_TRANSITION_FADE_MS)
 
-    local willPlay, soundHandle = PlaySoundFile(fileDataID, "Music")
+    local willPlay, soundHandle = PlaySoundFile(fileDataID, MUSIC_PLAYBACK_CHANNEL)
     if not willPlay then
         LogMusic("PlaySoundFile failed for music track ID " .. fileDataID)
         RecordMusicTrace("PlaySoundFile failed for track=" .. tostring(fileDataID))
-        return
+        return false
     end
 
     state.musicHandle = soundHandle
@@ -788,6 +871,7 @@ local function PlayMusicTrack(fileDataID, poolName, reason)
         " (" .. tostring(reason or "unspecified") .. ")")
     RecordMusicTrace("Playing pool=" .. tostring(poolName or "?") .. " track=" .. tostring(fileDataID) ..
         " reason=" .. tostring(reason or "unspecified"))
+    return true
 end
 
 local function EvaluateMusicState(reason, forceTrackRefresh)
@@ -800,6 +884,8 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
 
     local context = GetMusicContext()
     local contextSignature = context.areaKey
+    local shouldSuppressNativeVolume = context.supported and IsMusicReplacementActive() and IsGlobalMusicEnabled()
+    SetNativeMusicVolumeSuppressed(shouldSuppressNativeVolume, reason)
 
     if not IsGlobalMusicEnabled() then
         state.musicCurrentAreaKey = context.areaKey
@@ -882,7 +968,17 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         state.musicExpectedEndTime <= 0 and
         ((GetTime() - state.musicLastTrackStartedAt) >= MUSIC_TRACK_ROTATE_SECONDS)
 
-    if enteringSupportedZone or regionChanged then
+    local shouldForceNativeGuard = forceTrackRefresh or globalMusicToggleChanged or enteringSupportedZone or areaChanged or regionChanged
+    if shouldForceNativeGuard then
+        EnforceNativeMusicSuppression(reason or "update", true)
+    elseif not MUSIC_SUPPRESS_NATIVE_WITH_VOLUME then
+        EnforceNativeMusicSuppression(reason or "periodic", false)
+    end
+
+    -- Intro should only be a true "fresh entry" cue.
+    -- Region boundary swaps inside supported territory must not
+    -- keep re-queuing intro tracks.
+    if enteringSupportedZone then
         state.musicIntroPending = ShouldQueueMusicIntro(context.regionKey)
     end
 
@@ -926,7 +1022,16 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         elseif resolvedRegionKey then
             resolvedPoolName = tostring(resolvedRegionKey) .. ":" .. poolName
         end
-        PlayMusicTrack(nextTrack, resolvedPoolName, reason or (areaChanged and "area change" or "rotation"))
+        local didPlay = PlayMusicTrack(nextTrack, resolvedPoolName, reason or (areaChanged and "area change" or "rotation"))
+        if not didPlay and context.regionKey == MUSIC_REGION_AMANI then
+            local fallbackPoolName = context.isNight and "night" or "day"
+            local fallbackPool, fallbackRegionKey = GetMusicTrackPool(MUSIC_REGION_EVERSONG_SOUTH, fallbackPoolName)
+            local fallbackTrack = ChooseMusicTrack(fallbackPoolName, fallbackPool)
+            if fallbackTrack then
+                local fallbackResolvedPoolName = tostring(fallbackRegionKey or MUSIC_REGION_EVERSONG_SOUTH) .. ":" .. fallbackPoolName
+                PlayMusicTrack(fallbackTrack, fallbackResolvedPoolName, "amani fallback after failed troll track")
+            end
+        end
     else
         LogMusic("No replacement music tracks are configured for pool " .. tostring(poolName or "?"))
         RecordMusicTrace("No tracks configured for pool=" .. tostring(poolName or "?"))
@@ -2343,6 +2448,7 @@ frame:RegisterEvent("ZONE_CHANGED")
 frame:RegisterEvent("ZONE_CHANGED_INDOORS")
 frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 frame:RegisterEvent("PLAYER_UPDATE_RESTING")
+frame:RegisterEvent("CVAR_UPDATE")
 
 frame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
@@ -2385,6 +2491,13 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         -- resting flag flip.
         EvaluateMusicState(event, false)
         RefreshUI()
+
+    elseif event == "CVAR_UPDATE" then
+        local cvarName = tostring(arg1 or "")
+        if cvarName == "Sound_EnableMusic" or cvarName == "Sound_EnableAllSound" then
+            EvaluateMusicState(event .. ":" .. cvarName, true)
+            RefreshUI()
+        end
     end
 end)
 

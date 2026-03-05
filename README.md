@@ -1,6 +1,6 @@
 # Blood Elf Restore
 
-Version: `0.4.0-alpha`
+Version: `0.5.0-alpha`
 
 ## Disclaimer
 
@@ -59,6 +59,11 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
   - `sunstrider`
   - `eversong_south`
   - `deatholme`
+  - `amani`
+- Amani-style troll subzones now route to dedicated troll music logic:
+  - explicit overrides for `Amani Pass`, `Zeb'Nowa`, and `Zeb'tela Ruins`
+  - name-pattern fallback for subzones containing `amani` or `zeb'`
+- Ctrl+M and global sound-toggle changes now trigger immediate music re-evaluation (`CVAR_UPDATE`) without waiting for periodic ticks
 - The settings UI is now split into separate `Voice` and `Music` tabs
 - Music can optionally play an intro cue on fresh entry, then rotate through day or night pools
 - Music trace recording can be enabled, walked through the city, and saved via `/reload` or logout for later tuning
@@ -76,6 +81,7 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
 - Music replacement is an addon-side approximation, not a true engine-level override of Blizzard's internal zone music resolver
 - The addon cannot reliably read the exact native Midnight music FileDataID currently playing
 - Music transitions are smoother than a hard stop, but they are still limited by what `PlaySoundFile()` and `StopSound()` allow on the addon side
+- To reduce stubborn double-music bleed-through, injected replacement music uses the `Master` channel while native music volume is temporarily forced to `0` in supported replacement areas (then restored when leaving control)
 - Supported-zone continuity for interiors and enclave slices depends on the allow-lists in `BElfRestore.lua`
 
 ## Core Design
@@ -103,9 +109,10 @@ The music system uses a similar approximation model:
 4. Avoid immediate repeats with a per-track cooldown.
 5. Stop and restart the injected music with a short fade when the context changes.
 
-In `0.4.0-alpha`, the music layer also:
+In `0.5.0-alpha`, the music layer also:
 
 - uses region-specific pools for broader Eversong, Sunstrider Isle, southern Eversong remastered areas, and a dedicated Deatholme pocket
+- adds dedicated Amani-region routing with verified Zul'Aman ambient IDs (`53825`-`53830`)
 - avoids replaying intro cues too often with a separate intro cooldown
 - lets known tracks finish naturally instead of cutting them off with the old coarse timer
 - keeps `/belr music stop` idle until a real resume trigger occurs
@@ -116,10 +123,19 @@ In `0.4.0-alpha`, the music layer also:
   Main logic, UI, event handling, classification, overrides, playback rules.
 - `SoundData.lua`
   New Midnight mute IDs plus TBC male/female voice pools, tracked Midnight music IDs, and TBC music pools.
+- `TBC_ID_CATALOG.lua`
+  Data-first TBC zone-music ID catalog (Quel'Thalas focus + Outland + key TBC instances) for future config authoring.
+- `TBC_ID_INDEX.md`
+  Human-readable summary/counts and full Quel'Thalas ID listing generated from wow-listfile.
+- `tbc_art.jpg`
+  Optional UI background art used by the settings panel.
 - `bloodElfRestore.toc`
   Addon metadata and load order.
 - `DEV_NOTES.md`
   Ongoing developer handoff notes.
+
+Catalog regeneration:
+- `tools/generate_tbc_catalog.ps1 -ListfilePath <path-to-community-listfile-withcapitals.csv> -ReleaseTag <tag>`
 
 ## Commands
 
@@ -280,7 +296,8 @@ Music test playback:
 - Role classification still uses name heuristics for many NPCs.
 - The role-pool slicing logic depends on the exact list order in `SoundData.lua`.
 - Legacy `genderOverrides` and `roleOverrides` are migrated once into a backup field, then reset in favor of GUID-based overrides.
-- To reduce stubborn double-music leaks from unknown Midnight IDs, replacement playback now calls `StopMusic()` first; this can make some transitions feel more abrupt.
+- To suppress stubborn double-music leaks, replacement music uses `Master` playback while native music volume is temporarily forced to `0` inside active supported-routing control.
+- Native suppression state is restored automatically when leaving replacement-music control.
 - The music trace recorder does not create a standalone text file. It writes into SavedVariables, which WoW flushes to disk on `/reload` or logout.
 - Large trace captures should be done in a single pass and then cleared; the recorder keeps a capped ring buffer, not an infinite log.
 

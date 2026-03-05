@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- No changes yet.
+
+## 0.5.0-alpha
+
+- Bumped working addon/docs metadata version from `0.4.0-alpha` to `0.5.0-alpha`.
 - Rebranded visible addon naming from `Blood Elf Voice Restore` to `Blood Elf Restore`.
 - Renamed main addon script from `BElfVoiceRestore.lua` to `BElfRestore.lua` and updated TOC load order.
 - Switched primary slash command docs/UI prompts to `/belr` while keeping `/belvr` as a legacy alias.
@@ -10,6 +15,18 @@
 - Added legacy compatibility so custom `SoundData.lua` packs that still define `ghostlands` are treated as `eversong_south`.
 - Added `/belr music note <text>` to write manual zone/subzone/region marker lines into the trace buffer.
 - Added a `StopMusic()` pre-playback reset before replacement music starts to reduce native Midnight overlap in leak-prone pockets.
+- Added native-music suppression by temporarily forcing `Sound_MusicVolume=0` while replacement music is active in supported areas, then restoring the prior value when leaving control.
+- Switched injected replacement music playback to the `Master` channel so native `Music` channel suppression does not cut the injected track.
+- Added immediate `CVAR_UPDATE` handling for `Sound_EnableMusic` and `Sound_EnableAllSound` so Ctrl+M and sound toggles react without waiting for periodic ticks.
+- Fixed intro routing so intro cues are queued only on true fresh entry into supported music space, not on every internal region swap.
+- Rebalanced southern pools so `deatholme` no longer uses `53513`, and Deatholme now uses a darker dedicated intro/day/night selection.
+- Added scalable/clipped UI background-art support (`tbc_art.jpg`) with configurable margins and independent X/Y art scaling.
+- Added a dedicated `amani` music region (Amani Pass / Zeb ruins routing) with verified old TBC Zul'Aman ambient FileDataIDs (`53825`-`53830`) so troll subzones no longer default to elf music.
+- Added dynamic Amani routing fallback for subzone names containing `amani` or `zeb'`.
+- Added `thalassian range` regional override to keep southern corridor routing stable.
+- Added fail-safe playback fallback for `amani`: if a selected Zul'Aman path cannot be played in the current client build, routing falls back to southern-Eversong pool selection.
+- Added `TBC_ID_CATALOG.lua` and `TBC_ID_INDEX.md` generated from wowdev/wow-listfile (`202603051942`) to provide a full TBC zone-music ID database for future config-driven routing.
+- Added `tools/generate_tbc_catalog.ps1` to regenerate the TBC catalog/index from a listfile dump.
 
 ## 0.4.0-alpha
 

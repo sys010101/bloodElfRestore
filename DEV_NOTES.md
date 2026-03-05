@@ -3,7 +3,7 @@
 ## Current Purpose
 
 Current working version:
-- `0.4.0-alpha`
+- `0.5.0-alpha`
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Silvermoon while muting the newer Midnight replacement voice set.
 
@@ -36,6 +36,12 @@ Main behavior:
   - Role and gender overrides
 - `bloodElfRestore.toc`
   - Correct TOC name matching the addon folder
+- `TBC_ID_CATALOG.lua`
+  - Generated TBC zone-music ID database for config/data authoring
+  - Includes Quel'Thalas focus (`Eversong`, `Ghostlands`, `Zulaman`, `Sunwell`)
+  - Includes Outland and key TBC instance music folders
+- `TBC_ID_INDEX.md`
+  - Human-readable index and zone counts for the generated catalog
 
 ## Major Fixes Already Applied
 
@@ -73,6 +79,7 @@ Current UI includes:
 - Clear music trace
 - Restore Midnight music
 - Force music refresh
+- Optional semi-transparent panel background art (`tbc_art.jpg`) with tunable margins and manual X/Y art scaling
 
 Behavior note:
 - `Re-apply mutes` now also turns the mute option back on if it had been disabled
@@ -180,6 +187,7 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - `sunstrider`
   - `eversong_south`
   - `deatholme`
+  - `amani`
 - Supported subzone fallback and override routing now includes:
   - `The Bazaar`
   - `Sunstrider Isle`
@@ -187,6 +195,8 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - `Sanctum of the Moon`
   - several southern remastered subzones mapped into the `eversong_south` family
   - `Ruins of Deatholme` mapped into the dedicated `deatholme` family
+  - `Amani Pass`, `Zeb'Nowa`, and `Zeb'tela Ruins` mapped into the dedicated `amani` family
+  - dynamic pattern fallback for troll-style subzone names containing `amani` or `zeb'`
 - The music system checks:
   - zone changes
   - indoor-like subzone changes
@@ -198,7 +208,9 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
 - Long stays in the same supported area still have fallback periodic rotation for unknown-duration cases
 - The music shuffle system keeps recently played TBC tracks on a cooldown so the same track does not immediately repeat
 - Playback routing now keys off a stable region + day/night signature instead of tiny subzone churn, which greatly reduces constant restarts while moving around Silvermoon
-- Replacement playback now issues `StopMusic()` before `PlaySoundFile(..., "Music")` as a last-resort native-channel reset for stubborn overlap pockets
+- Native music suppression now combines `StopMusic()` guard calls with temporary `Sound_MusicVolume=0` while supported replacement is active, and injected music is played on `Master` so native suppression does not cut the injected track
+- Ctrl+M and global music toggles now trigger immediate re-evaluation through `CVAR_UPDATE` handling
+- Intro cues are now queued only on true fresh supported-entry, not on every internal region swap
 - Music stop transitions currently use a longer fade than the first pass to reduce abrupt cutoffs when area routing changes
 - Music debug output now indicates whether the current area was matched by zone name or by subzone allow-list
 - `/belr music stop` now creates a real manual stop state and stays idle until a meaningful resume trigger occurs
@@ -250,6 +262,14 @@ Add them to:
 - `BElfVR_TBCMusicRegions.<region>.intro`
 - `BElfVR_TBCMusicRegions.<region>.day`
 - `BElfVR_TBCMusicRegions.<region>.night`
+
+### TBC Catalog Data Source
+
+- `TBC_ID_CATALOG.lua` and `TBC_ID_INDEX.md` are generated from wowdev/wow-listfile release `202603051942`.
+- Scope is TBC-era zone-music families (not every possible TBC-era asset path in the client).
+- Use this catalog as the source-of-truth dataset for future `config.lua` routing work.
+- Regeneration command:
+  - `tools/generate_tbc_catalog.ps1 -ListfilePath <community-listfile-withcapitals.csv> -ReleaseTag <release-tag>`
 
 Keep the current grouping/order:
 - noble block first
@@ -341,6 +361,7 @@ Implemented a focused music-routing and trace tooling pass:
 - Added dedicated `deatholme` routing for `Ruins of Deatholme` with a narrow dark pool.
 - Added compatibility handling so legacy `BElfVR_TBCMusicRegions.ghostlands` data is still consumed as `eversong_south`.
 - Added `/belr music note <text>` to write manual markers into the SavedVariables music trace with current zone/subzone/region context.
+- Added `amani` regional routing for Amani/Zeb-style subzones and mapped it to verified Zul'Aman ambient IDs (`53825`-`53830`) in `SoundData.lua`.
 - Updated docs and in-game help text for the new routing names and command.
 
 Data note:
