@@ -127,7 +127,7 @@ In `0.5.0-alpha`, the music layer also:
   Data-first TBC zone-music ID catalog (Quel'Thalas focus + Outland + key TBC instances) for future config authoring.
 - `TBC_ID_INDEX.md`
   Human-readable summary/counts and full Quel'Thalas ID listing generated from wow-listfile.
-- `tbc_art.jpg`
+- `assets/tbc_art.jpg`
   Optional UI background art used by the settings panel.
 - `bloodElfRestore.toc`
   Addon metadata and load order.

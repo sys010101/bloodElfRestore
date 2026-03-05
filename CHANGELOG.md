@@ -20,7 +20,7 @@
 - Added immediate `CVAR_UPDATE` handling for `Sound_EnableMusic` and `Sound_EnableAllSound` so Ctrl+M and sound toggles react without waiting for periodic ticks.
 - Fixed intro routing so intro cues are queued only on true fresh entry into supported music space, not on every internal region swap.
 - Rebalanced southern pools so `deatholme` no longer uses `53513`, and Deatholme now uses a darker dedicated intro/day/night selection.
-- Added scalable/clipped UI background-art support (`tbc_art.jpg`) with configurable margins and independent X/Y art scaling.
+- Added scalable/clipped UI background-art support (`assets/tbc_art.jpg`) with configurable margins and independent X/Y art scaling.
 - Added a dedicated `amani` music region (Amani Pass / Zeb ruins routing) with verified old TBC Zul'Aman ambient FileDataIDs (`53825`-`53830`) so troll subzones no longer default to elf music.
 - Added dynamic Amani routing fallback for subzone names containing `amani` or `zeb'`.
 - Added `thalassian range` regional override to keep southern corridor routing stable.

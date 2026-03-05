@@ -79,7 +79,7 @@ Current UI includes:
 - Clear music trace
 - Restore Midnight music
 - Force music refresh
-- Optional semi-transparent panel background art (`tbc_art.jpg`) with tunable margins and manual X/Y art scaling
+- Optional semi-transparent panel background art (`assets/tbc_art.jpg`) with tunable margins and manual X/Y art scaling
 
 Behavior note:
 - `Re-apply mutes` now also turns the mute option back on if it had been disabled

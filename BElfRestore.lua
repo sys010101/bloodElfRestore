@@ -93,8 +93,8 @@ local BLOOD_ELF_MUSIC_SUBZONES = {
 -- Settings UI art background.
 -- Source art is 1920x1200 (16:10). Keep the same aspect while fitting
 -- the current panel without cropping.
-local UI_ART_PATH = "Interface\\AddOns\\bloodElfRestore\\tbc_art"
-local UI_ART_PATH_WITH_EXT = "Interface\\AddOns\\bloodElfRestore\\tbc_art.jpg"
+local UI_ART_PATH = "Interface\\AddOns\\bloodElfRestore\\assets\\tbc_art"
+local UI_ART_PATH_WITH_EXT = "Interface\\AddOns\\bloodElfRestore\\assets\\tbc_art.jpg"
 local UI_ART_ASPECT_RATIO = 16 / 10
 local UI_ART_ALPHA = 0.10
 -- 0.0 = strict contain (full image, small on tall panels)
