@@ -11,155 +11,767 @@
 -- ============================================================
 
 local ADDON_NAME = "bloodElfRestore"
-local DB_SCHEMA_VERSION = 3
+local DB_SCHEMA_VERSION = 4
 
--- How many clicks on the same NPC before triggering a pissed line
-local PISSED_CLICK_THRESHOLD = 3
--- Time window (seconds) in which clicks count toward pissed threshold
-local PISSED_CLICK_WINDOW = 4
--- How long (seconds) after last greet to still play a bye line
-local BYE_GRACE_PERIOD = 60
--- Minimum time after a greet before a target-loss bye is allowed
-local TARGET_LOSS_BYE_DELAY = 1.6
--- Minimum spacing between injected TBC lines to prevent rapid overlap
-local MIN_PLAYBACK_GAP = 1.25
--- Briefly suppress native dialog around injected playback to prevent unknown Midnight VO from stacking
-local DIALOG_SUPPRESSION_WINDOW = 0.4
--- Fake distance falloff for non-3D injected VO.
--- Since PlaySoundFile cannot attach to the NPC in world space, we approximate falloff by
--- reducing how often target-select VO plays as the target gets farther away.
-local RANGE_TIER_NEAR_CHANCE = 0.65
-local RANGE_TIER_FAR_CHANCE = 0.25
-local BLOOD_ELF_FALLBACK_ZONES = {
-    ["silvermoon city"] = true,
-    ["eversong woods"] = true,
-    ["sunstrider isle"] = true,
-    ["ghostlands"] = true,
-}
+local LogMusic
+local RecordMusicTrace
+local RestoreInterruptedTemporaryCVars
+local RegionalMusicMuteIDs = (_G and rawget(_G, "BElfVR_RegionalMusicMuteIDs")) or {}
 
 -- ============================================================
---  MUSIC CONSTANTS
---  This block is safe for end users to tune carefully.
---
---  SAFE TO CHANGE:
---  - `MUSIC_TRACK_ROTATE_SECONDS`: approximate time before the
---    addon rotates to another TBC music track if you stay in the
---    same supported area for a long time.
---  - `MUSIC_REPEAT_COOLDOWN`: minimum time before the same track
---    is allowed to be picked again by the shuffle logic.
---  - `MUSIC_DAY_START_HOUR` and `MUSIC_NIGHT_START_HOUR`: the
---    day/night split used for selecting the replacement pool.
---
---  CHANGE WITH CARE:
---  - `BLOOD_ELF_MUSIC_ZONES` should only contain lowercase zone
---    names that you explicitly want to receive replacement music.
---  - Removing both supported zones effectively disables the
---    region routing logic.
+--  CONFIG HELPERS
+--  `Config.lua` is the user-editable policy layer. The runtime keeps
+--  defensive fallbacks so one bad edit does not instantly brick the
+--  addon.
 -- ============================================================
-local MUSIC_UPDATE_INTERVAL = 1.0
-local MUSIC_TRACK_ROTATE_SECONDS = 85
-local MUSIC_REPEAT_COOLDOWN = 180
-local MUSIC_INTRO_REPEAT_COOLDOWN = 600
-local MUSIC_TRANSITION_FADE_MS = 900
-local MUSIC_FORCE_STOP_NATIVE_BEFORE_REPLACEMENT = true
-local MUSIC_NATIVE_GUARD_INTERVAL = 2.5
-local MUSIC_PLAYBACK_CHANNEL = "Master"
-local MUSIC_SUPPRESS_NATIVE_WITH_VOLUME = true
-local MUSIC_NATIVE_SUPPRESS_VOLUME = 0
-local MUSIC_END_GRACE_SECONDS = 0.5
-local MUSIC_DAY_START_HOUR = 6
-local MUSIC_NIGHT_START_HOUR = 18
-local BLOOD_ELF_MUSIC_ZONES = {
-    ["silvermoon city"] = true,
-    ["eversong woods"] = true,
-    ["sanctum of light"] = true,
-}
+function GetUserConfigRoot()
+    return type(BElfVR_Config) == "table" and BElfVR_Config or nil
+end
 
--- Some Midnight interiors and enclave slices report a different
--- top-level zone name while still being logically inside the same
--- Silvermoon music space. Add lowercase subzone names here as you
--- discover them in verbose mode.
---
--- SAFE TO CHANGE:
--- - Add more lowercase subzone names as you test.
---
--- CHANGE WITH CARE:
--- - These are broad allow-list matches. Adding unrelated names can
---   make TBC music bleed into places you do not want.
-local BLOOD_ELF_MUSIC_SUBZONES = {
-    ["the bazaar"] = true,
-}
+function GetConfigValue(...)
+    local node = GetUserConfigRoot()
+    for i = 1, select("#", ...) do
+        if type(node) ~= "table" then
+            return nil
+        end
+        node = node[select(i, ...)]
+    end
+    return node
+end
 
--- Settings UI art background.
--- Source art is 1920x1200 (16:10). Keep the same aspect while fitting
--- the current panel without cropping.
-local UI_ART_PATH = "Interface\\AddOns\\bloodElfRestore\\assets\\tbc_art"
-local UI_ART_PATH_WITH_EXT = "Interface\\AddOns\\bloodElfRestore\\assets\\tbc_art.jpg"
-local UI_ART_ASPECT_RATIO = 16 / 10
-local UI_ART_ALPHA = 0.10
--- 0.0 = strict contain (full image, small on tall panels)
--- 1.0 = strict cover (full panel, stronger side crop)
-local UI_ART_FIT_BLEND = 1.0
--- Manual art zoom (independent from UI size). Values > 1 enlarge.
--- Overspill is clipped by the UI art host frame.
-local UI_ART_SCALE_X = 1.0
-local UI_ART_SCALE_Y = 1.0
--- Art host margins inside the window.
-local UI_ART_MARGIN_LEFT = 12
-local UI_ART_MARGIN_RIGHT = 12
-local UI_ART_MARGIN_TOP = 50
-local UI_ART_MARGIN_BOTTOM = 12
-local SETTINGS_UI_WIDTH = 550
-local SETTINGS_UI_HEIGHT = 750
-local SETTINGS_CONTENT_WIDTH = 446
-local SETTINGS_CONTENT_SIDE_MARGIN = math.floor((SETTINGS_UI_WIDTH - SETTINGS_CONTENT_WIDTH) * 0.5)
-local SETTINGS_TAB_GROUP_WIDTH = 190 -- 2x 92px buttons + 6px gap
-local SETTINGS_TAB_START_X = math.floor((SETTINGS_UI_WIDTH - SETTINGS_TAB_GROUP_WIDTH) * 0.5)
+function NormalizeUserConfigKey(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    local normalized = strtrim(string.lower(value))
+    if normalized == "" then
+        return nil
+    end
+
+    return normalized
+end
+
+function GetConfigBoolean(defaultValue, ...)
+    local value = GetConfigValue(...)
+    if type(value) == "boolean" then
+        return value
+    end
+    return defaultValue
+end
+
+function GetConfigNumber(defaultValue, ...)
+    local value = tonumber(GetConfigValue(...))
+    if value == nil then
+        return defaultValue
+    end
+    return value
+end
+
+function GetConfigInteger(defaultValue, ...)
+    local value = tonumber(GetConfigValue(...))
+    if value == nil then
+        return defaultValue
+    end
+    return math.floor(value + 0.5)
+end
+
+function GetConfigString(defaultValue, ...)
+    local value = GetConfigValue(...)
+    if type(value) == "string" and value ~= "" then
+        return value
+    end
+    return defaultValue
+end
+
+function BuildNormalizedStringSet(source)
+    local set = {}
+    if type(source) ~= "table" then
+        return set
+    end
+
+    for key, value in pairs(source) do
+        local normalized = nil
+        if type(key) == "number" then
+            normalized = NormalizeUserConfigKey(value)
+        elseif value == true then
+            normalized = NormalizeUserConfigKey(key)
+        end
+
+        if normalized then
+            set[normalized] = true
+        end
+    end
+
+    return set
+end
+
+function BuildNormalizedStringList(source)
+    local list = {}
+    local seen = {}
+    if type(source) ~= "table" then
+        return list
+    end
+
+    local function remember(value)
+        local normalized = NormalizeUserConfigKey(value)
+        if normalized and not seen[normalized] then
+            seen[normalized] = true
+            list[#list + 1] = normalized
+        end
+    end
+
+    for key, value in pairs(source) do
+        if type(key) == "number" then
+            remember(value)
+        elseif value == true then
+            remember(key)
+        end
+    end
+
+    return list
+end
+
+function BuildNormalizedStringMap(source, valueNormalizer)
+    local map = {}
+    if type(source) ~= "table" then
+        return map
+    end
+
+    for key, value in pairs(source) do
+        local normalizedKey = NormalizeUserConfigKey(key)
+        local normalizedValue = valueNormalizer and valueNormalizer(value) or NormalizeUserConfigKey(value)
+        if normalizedKey and normalizedValue then
+            map[normalizedKey] = normalizedValue
+        end
+    end
+
+    return map
+end
+
+function BuildNormalizedNPCOverrideMap(source, allowedValues)
+    local map = {}
+    if type(source) ~= "table" then
+        return map
+    end
+
+    for key, value in pairs(source) do
+        local npcID = nil
+        if type(key) == "number" then
+            npcID = tostring(math.floor(key + 0.5))
+        elseif type(key) == "string" and key ~= "" then
+            npcID = tostring(key)
+        end
+
+        if npcID and allowedValues[value] then
+            map[npcID] = value
+        end
+    end
+
+    return map
+end
+
+function BuildNormalizedNameProfileMap(source)
+    local map = {}
+    if type(source) ~= "table" then
+        return map
+    end
+
+    for key, value in pairs(source) do
+        local normalizedName = NormalizeUserConfigKey(key)
+        if normalizedName and type(value) == "table" then
+            local profile = {}
+            if value.role == "military" or value.role == "noble" or value.role == "standard" then
+                profile.role = value.role
+            end
+            if value.vendor == true then
+                profile.vendor = true
+            end
+            if value.exclude == true then
+                profile.exclude = true
+            end
+
+            if next(profile) ~= nil then
+                map[normalizedName] = profile
+            end
+        end
+    end
+
+    return map
+end
+
+-- ============================================================
+--  EFFECTIVE CONFIGURED POLICY
+--  These locals are the runtime-facing values after Config.lua was
+--  parsed and sanitized.
+-- ============================================================
+PISSED_CLICK_THRESHOLD = GetConfigInteger(3, "voice", "behavior", "pissedClickThreshold")
+PISSED_CLICK_WINDOW = GetConfigNumber(4, "voice", "behavior", "pissedClickWindowSeconds")
+BYE_GRACE_PERIOD = GetConfigNumber(60, "voice", "behavior", "byeGracePeriodSeconds")
+TARGET_LOSS_BYE_DELAY = GetConfigNumber(1.6, "voice", "behavior", "targetLossByeDelaySeconds")
+TARGET_LOSS_BYE_MAX_AGE = math.max(
+    TARGET_LOSS_BYE_DELAY,
+    GetConfigNumber(4.0, "voice", "behavior", "targetLossByeMaxAgeSeconds")
+)
+MIN_PLAYBACK_GAP = GetConfigNumber(1.25, "voice", "behavior", "minPlaybackGapSeconds")
+DIALOG_SUPPRESSION_WINDOW = GetConfigNumber(0.4, "voice", "behavior", "dialogSuppressionWindowSeconds")
+RANGE_TIER_NEAR_CHANCE = GetConfigNumber(0.65, "voice", "behavior", "rangeTierNearChance")
+RANGE_TIER_FAR_CHANCE = GetConfigNumber(0.25, "voice", "behavior", "rangeTierFarChance")
+TARGET_SELECT_DEDUPE_WINDOW = GetConfigNumber(0.35, "voice", "behavior", "targetSelectDedupeWindowSeconds")
+
+BLOOD_ELF_FALLBACK_ZONES = BuildNormalizedStringSet(
+    GetConfigValue("voice", "scope", "fallbackZones") or {
+        "silvermoon city",
+        "eversong woods",
+        "sunstrider isle",
+        "ghostlands",
+        "sanctum of light",
+        "the bazaar",
+    }
+)
+
+BLOOD_ELF_VOICE_SCOPE_TOKENS = BuildNormalizedStringSet(
+    GetConfigValue("voice", "scope", "scopeTokens") or {
+        "quelthalas",
+        "silvermooncity",
+        "eversongwoods",
+        "ghostlands",
+        "sunstriderisle",
+        "sanctumoflight",
+    }
+)
+
+BLOOD_ELF_TOOLTIP_RACE_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "classification", "tooltipBloodElfRaceTokens") or {
+        "blood elf",
+        "sin'dorei",
+    }
+)
+
+BLOOD_ELF_TOOLTIP_CHILD_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "classification", "tooltipChildTokens") or {
+        "child",
+    }
+)
+
+CHILD_NAME_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "classification", "childNameTokens") or {
+        "child",
+        "orphan",
+    }
+)
+
+KNOWN_NON_BLOOD_ELF_RACE_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "classification", "knownNonBloodElfRaceTokens") or {
+        "human",
+        "orc",
+        "dwarf",
+        "night elf",
+        "gnome",
+        "troll",
+        "tauren",
+        "undead",
+        "forsaken",
+        "draenei",
+        "worgen",
+        "goblin",
+        "pandaren",
+        "tortollan",
+        "grummle",
+        "zandalari troll",
+        "kul tiran",
+        "dark iron dwarf",
+        "mag'har orc",
+        "void elf",
+        "lightforged draenei",
+        "nightborne",
+        "highmountain tauren",
+        "vulpera",
+        "mechagnome",
+        "dracthyr",
+        "earthen",
+    }
+)
+
+MILITARY_ROLE_NAME_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "roleHeuristics", "militaryNameTokens") or {
+        "guard",
+        "ranger",
+        "captain",
+        "blood knight",
+        "champion",
+    }
+)
+
+NOBLE_ROLE_NAME_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "roleHeuristics", "nobleNameTokens") or {
+        "lord",
+        "lady",
+        "noble",
+    }
+)
+
+MUSIC_UPDATE_INTERVAL = GetConfigNumber(1.0, "music", "timing", "updateIntervalSeconds")
+MUSIC_TRACK_ROTATE_SECONDS = GetConfigNumber(85, "music", "timing", "trackRotateSeconds")
+MUSIC_REPEAT_COOLDOWN = GetConfigNumber(180, "music", "timing", "repeatCooldownSeconds")
+MUSIC_INTRO_REPEAT_COOLDOWN = 600
+MUSIC_TRANSITION_FADE_MS = GetConfigInteger(900, "music", "timing", "transitionFadeMS")
+MUSIC_FORCE_STOP_NATIVE_BEFORE_REPLACEMENT = GetConfigBoolean(true, "music", "playback", "forceStopNativeBeforeReplacement")
+MUSIC_NATIVE_GUARD_INTERVAL = GetConfigNumber(0.25, "music", "playback", "nativeGuardIntervalSeconds")
+MUSIC_PLAYBACK_CHANNEL = GetConfigString("Music", "music", "playback", "playbackChannel")
+MUSIC_SUPPRESS_NATIVE_WITH_VOLUME = GetConfigBoolean(false, "music", "playback", "suppressNativeWithVolume")
+MUSIC_NATIVE_SUPPRESS_VOLUME = GetConfigNumber(0, "music", "playback", "nativeSuppressVolume")
+MUSIC_END_GRACE_SECONDS = GetConfigNumber(0.5, "music", "timing", "endGraceSeconds")
+MUSIC_DAY_START_HOUR = GetConfigInteger(6, "music", "dayNightHours", "dayStartHour")
+MUSIC_NIGHT_START_HOUR = GetConfigInteger(18, "music", "dayNightHours", "nightStartHour")
+MUSIC_STARTUP_PURGE_DELAY_SECONDS = GetConfigNumber(0.35, "music", "playback", "startupPurgeDelaySeconds")
+MUSIC_TRACE_MAX_ENTRIES = GetConfigInteger(1200, "music", "debug", "traceMaxEntries")
+
+BLOOD_ELF_MUSIC_ZONES = BuildNormalizedStringSet(
+    GetConfigValue("music", "scope", "supportedZones") or {
+        "silvermoon city",
+        "eversong woods",
+        "sanctum of light",
+    }
+)
+
+BLOOD_ELF_MUSIC_SUBZONES = BuildNormalizedStringSet(
+    GetConfigValue("music", "scope", "supportedSubZones") or {
+        "the bazaar",
+    }
+)
+
+BLOOD_ELF_MUSIC_NATIVE_ONLY_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("music", "scope", "nativeOnlyTokens") or {
+        "harandar",
+    }
+)
+
+BLOOD_ELF_MUSIC_SCOPE_TOKENS = BuildNormalizedStringSet(
+    GetConfigValue("music", "scope", "scopeTokens") or {
+        "quelthalas",
+        "silvermooncity",
+        "eversongwoods",
+        "ghostlands",
+        "sunstriderisle",
+        "sanctumoflight",
+    }
+)
+
+UI_ART_PATH = GetConfigString("Interface\\AddOns\\bloodElfRestore\\assets\\tbc_art", "ui", "art", "texturePath")
+UI_ART_PATH_WITH_EXT = GetConfigString("Interface\\AddOns\\bloodElfRestore\\assets\\tbc_art.jpg", "ui", "art", "fallbackTexturePath")
+UI_ART_ASPECT_RATIO = GetConfigNumber(16 / 10, "ui", "art", "aspectRatio")
+UI_ART_ALPHA = GetConfigNumber(0.10, "ui", "art", "alpha")
+UI_ART_FIT_BLEND = GetConfigNumber(1.0, "ui", "art", "fitBlend")
+UI_ART_SCALE_X = GetConfigNumber(1.0, "ui", "art", "scaleX")
+UI_ART_SCALE_Y = GetConfigNumber(1.0, "ui", "art", "scaleY")
+UI_ART_MARGIN_LEFT = GetConfigInteger(12, "ui", "art", "margins", "left")
+UI_ART_MARGIN_RIGHT = GetConfigInteger(12, "ui", "art", "margins", "right")
+UI_ART_MARGIN_TOP = GetConfigInteger(50, "ui", "art", "margins", "top")
+UI_ART_MARGIN_BOTTOM = GetConfigInteger(12, "ui", "art", "margins", "bottom")
+SETTINGS_UI_WIDTH = GetConfigInteger(550, "ui", "layout", "windowWidth")
+SETTINGS_UI_HEIGHT = GetConfigInteger(750, "ui", "layout", "windowHeight")
+SETTINGS_CONTENT_WIDTH = GetConfigInteger(446, "ui", "layout", "contentWidth")
+SETTINGS_CONTENT_SIDE_MARGIN = math.floor((SETTINGS_UI_WIDTH - SETTINGS_CONTENT_WIDTH) * 0.5)
+SETTINGS_TAB_BUTTON_WIDTH = GetConfigInteger(92, "ui", "layout", "tabButtonWidth")
+SETTINGS_TAB_BUTTON_HEIGHT = GetConfigInteger(22, "ui", "layout", "tabButtonHeight")
+SETTINGS_TAB_BUTTON_GAP = GetConfigInteger(6, "ui", "layout", "tabButtonGap")
+SETTINGS_TAB_GROUP_WIDTH = (SETTINGS_TAB_BUTTON_WIDTH * 2) + SETTINGS_TAB_BUTTON_GAP
+SETTINGS_TAB_START_X = math.floor((SETTINGS_UI_WIDTH - SETTINGS_TAB_GROUP_WIDTH) * 0.5)
 
 -- Broad music families. These are what the actual playback logic
 -- should react to. Fine-grained subzones are still logged for
 -- mapping, but they should not constantly restart the same track
 -- while you move around inside one logical music region.
-local MUSIC_REGION_SILVERMOON = "silvermoon"
-local MUSIC_REGION_EVERSONG = "eversong"
-local MUSIC_REGION_SUNSTRIDER = "sunstrider"
-local MUSIC_REGION_EVERSONG_SOUTH = "eversong_south"
-local MUSIC_REGION_DEATHOLME = "deatholme"
-local MUSIC_REGION_AMANI = "amani"
-local MUSIC_REGION_LEGACY_GHOSTLANDS = "ghostlands"
+MUSIC_REGION_SILVERMOON = "silvermoon"
+MUSIC_REGION_EVERSONG = "eversong"
+MUSIC_REGION_SUNSTRIDER = "sunstrider"
+MUSIC_REGION_EVERSONG_SOUTH = "eversong_south"
+MUSIC_REGION_DEATHOLME = "deatholme"
+MUSIC_REGION_AMANI = "amani"
+MUSIC_REGION_LEGACY_GHOSTLANDS = "ghostlands"
+RAW_DEFAULT_SUPPORTED_SUBZONE_REGION = NormalizeUserConfigKey(
+    GetConfigValue("music", "routing", "defaultSupportedSubZoneRegion")
+)
+DEFAULT_SUPPORTED_SUBZONE_REGION = nil
+MUSIC_ZONE_REGION_OVERRIDES = nil
+MUSIC_SUBZONE_REGION_OVERRIDES = nil
+MUSIC_SUBZONE_REGION_TOKEN_OVERRIDES = nil
+MUSIC_NORMALIZED_SUBZONE_PATTERN_REGION_OVERRIDES = nil
+MUSIC_NATIVE_AMBIENCE_SUPPRESS_REGIONS = BuildNormalizedStringSet(
+    GetConfigValue("music", "playback", "regionsWithAmbienceSuppression") or {
+        MUSIC_REGION_DEATHOLME,
+    }
+)
 
-local function NormalizeMusicRegionKey(regionKey)
+function NormalizeMusicRegionKey(regionKey)
     if regionKey == MUSIC_REGION_LEGACY_GHOSTLANDS then
         return MUSIC_REGION_EVERSONG_SOUTH
     end
     return regionKey
 end
 
--- Some Midnight-era subzones still logically belong to a different
--- music family than the broad top-level zone name suggests.
--- This lets the addon route them into a different regional pool.
---
--- SAFE TO CHANGE:
--- - Add lowercase subzone names here as you confirm they should
---   borrow a different regional music family.
-local MUSIC_SUBZONE_REGION_OVERRIDES = {
-    ["amani pass"] = MUSIC_REGION_AMANI,
-    ["daggerspine landing"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["daggerspine point"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["farstrider enclave"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["goldenmist village"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["ruins of deatholme"] = MUSIC_REGION_DEATHOLME,
-    ["tranquillien"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["sanctum of the moon"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["sunstrider isle"] = MUSIC_REGION_SUNSTRIDER,
-    ["suncrown village"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["thalassian pass"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["thalassian range"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["windrunner spire"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["windrunner village"] = MUSIC_REGION_EVERSONG_SOUTH,
-    ["zeb'nowa"] = MUSIC_REGION_AMANI,
-    ["zeb'tela ruins"] = MUSIC_REGION_AMANI,
-}
+DEFAULT_SUPPORTED_SUBZONE_REGION = NormalizeMusicRegionKey(RAW_DEFAULT_SUPPORTED_SUBZONE_REGION)
+    or MUSIC_REGION_SILVERMOON
+
+MUSIC_ZONE_REGION_OVERRIDES = BuildNormalizedStringMap(
+    GetConfigValue("music", "routing", "byZone") or {},
+    function(value)
+        return NormalizeMusicRegionKey(NormalizeUserConfigKey(value))
+    end
+)
+
+MUSIC_SUBZONE_REGION_OVERRIDES = BuildNormalizedStringMap(
+    GetConfigValue("music", "routing", "bySubZone") or {},
+    function(value)
+        return NormalizeMusicRegionKey(NormalizeUserConfigKey(value))
+    end
+)
+
+MUSIC_SUBZONE_REGION_TOKEN_OVERRIDES = BuildNormalizedStringMap(
+    GetConfigValue("music", "routing", "bySubZoneToken") or {},
+    function(value)
+        return NormalizeMusicRegionKey(NormalizeUserConfigKey(value))
+    end
+)
+
+MUSIC_NORMALIZED_SUBZONE_PATTERN_REGION_OVERRIDES = BuildNormalizedStringMap(
+    GetConfigValue("music", "routing", "byNormalizedSubZoneToken") or {},
+    function(value)
+        return NormalizeMusicRegionKey(NormalizeUserConfigKey(value))
+    end
+)
+
+function NormalizeAreaMatchToken(text)
+    local normalized = string.lower(tostring(text or ""))
+    normalized = normalized:gsub("[^%w]+", "")
+    return normalized
+end
+
+function AreaHasNativeOnlyMusic(text)
+    local normalized = NormalizeAreaMatchToken(text)
+    if normalized == "" then
+        return false
+    end
+
+    for _, token in ipairs(BLOOD_ELF_MUSIC_NATIVE_ONLY_TOKENS) do
+        if strfind(normalized, token, 1, true) ~= nil then
+            return true
+        end
+    end
+
+    return false
+end
+
+function GetCurrentMapLineageTokens()
+    local tokens = {}
+    if not (C_Map and C_Map.GetBestMapForUnit and C_Map.GetMapInfo) then
+        return tokens
+    end
+
+    local mapID = C_Map.GetBestMapForUnit("player")
+    local seen = {}
+
+    while mapID and not seen[mapID] do
+        seen[mapID] = true
+
+        local mapInfo = C_Map.GetMapInfo(mapID)
+        if not mapInfo then
+            break
+        end
+
+        local token = NormalizeAreaMatchToken(mapInfo.name)
+        if token ~= "" then
+            tokens[token] = true
+        end
+
+        local parentMapID = tonumber(mapInfo.parentMapID) or 0
+        if parentMapID <= 0 then
+            break
+        end
+
+        mapID = parentMapID
+    end
+
+    return tokens
+end
+
+function ResolveBloodElfMusicScope(zoneName, subZoneName, hasDirectSubZoneSupport)
+    local zoneToken = NormalizeAreaMatchToken(zoneName)
+    if zoneToken ~= "" and BLOOD_ELF_MUSIC_SCOPE_TOKENS[zoneToken] then
+        return true, "zone"
+    end
+
+    local subZoneToken = NormalizeAreaMatchToken(subZoneName)
+    if subZoneToken ~= "" and BLOOD_ELF_MUSIC_SCOPE_TOKENS[subZoneToken] then
+        return true, "subzone"
+    end
+
+    local mapTokens = GetCurrentMapLineageTokens()
+    for token in pairs(mapTokens) do
+        if BLOOD_ELF_MUSIC_SCOPE_TOKENS[token] then
+            return true, "map"
+        end
+    end
+
+    if hasDirectSubZoneSupport then
+        return true, "direct-subzone"
+    end
+
+    return false, "none"
+end
+
+function ResolveMusicSubZoneRegionOverride(subZoneName, subZoneKey)
+    local exactRegionKey = NormalizeMusicRegionKey(MUSIC_SUBZONE_REGION_OVERRIDES[subZoneKey])
+    if exactRegionKey then
+        return exactRegionKey, "exact"
+    end
+
+    local subZoneToken = NormalizeAreaMatchToken(subZoneName)
+    if subZoneToken == "" then
+        return nil, "none"
+    end
+
+    for token, regionKey in pairs(MUSIC_SUBZONE_REGION_TOKEN_OVERRIDES) do
+        if strfind(subZoneToken, token, 1, true) ~= nil then
+            return NormalizeMusicRegionKey(regionKey), "token"
+        end
+    end
+
+    return nil, "none"
+end
+
+-- ============================================================
+--  INTRO COOLDOWN HELPERS
+--  These stay separate from the general config access layer because
+--  they also manage SavedVariables-backed runtime history.
+-- ============================================================
+function GetUserMusicIntroCooldownConfig()
+    local introConfig = GetConfigValue("music", "introCooldowns")
+    return type(introConfig) == "table" and introConfig or nil
+end
+
+function NormalizeConfiguredCooldownSeconds(value)
+    local seconds = tonumber(value)
+    if not seconds or seconds <= 0 then
+        return nil
+    end
+
+    return math.floor(seconds + 0.5)
+end
+
+-- Persisted intro cooldowns must survive `/reload`, so they need a
+-- stable wall-clock time source rather than `GetTime()`, which resets
+-- with every Lua instance.
+function GetStableTimestampSeconds()
+    if type(GetServerTime) == "function" then
+        local serverNow = tonumber(GetServerTime())
+        if serverNow and serverNow > 0 then
+            return serverNow
+        end
+    end
+
+    if type(time) == "function" then
+        local localNow = tonumber(time())
+        if localNow and localNow > 0 then
+            return localNow
+        end
+    end
+
+    return math.floor(GetTime())
+end
+
+function BuildMusicLocationRuleKey(zoneKey, subZoneKey)
+    local normalizedZoneKey = NormalizeUserConfigKey(zoneKey)
+    local normalizedSubZoneKey = NormalizeUserConfigKey(subZoneKey)
+
+    if not normalizedZoneKey or not normalizedSubZoneKey or normalizedSubZoneKey == normalizedZoneKey then
+        return nil
+    end
+
+    return normalizedZoneKey .. "||" .. normalizedSubZoneKey
+end
+
+function BuildMusicPoolRuleKey(regionKey, poolName)
+    local normalizedRegionKey = NormalizeMusicRegionKey(regionKey)
+    local normalizedPoolName = NormalizeUserConfigKey(poolName)
+
+    if not normalizedRegionKey or not normalizedPoolName then
+        return nil
+    end
+
+    return normalizedRegionKey .. ":" .. normalizedPoolName
+end
+
+function GetMusicIntroHistoryStore()
+    if not BElfVRDB then
+        return nil
+    end
+
+    if type(BElfVRDB.musicIntroHistory) ~= "table" then
+        BElfVRDB.musicIntroHistory = {}
+    end
+
+    return BElfVRDB.musicIntroHistory
+end
+
+function AddMusicIntroCooldownBucket(bucketList, seenBuckets, historyKey, label, seconds)
+    if not historyKey or not label then
+        return
+    end
+
+    local normalizedSeconds = NormalizeConfiguredCooldownSeconds(seconds)
+    if not normalizedSeconds or seenBuckets[historyKey] then
+        return
+    end
+
+    seenBuckets[historyKey] = true
+    bucketList[#bucketList + 1] = {
+        historyKey = historyKey,
+        label = label,
+        seconds = normalizedSeconds,
+    }
+end
+
+-- Build every cooldown bucket that applies to one intro candidate.
+-- All matching buckets are enforced together so:
+-- - broad defaults still work
+-- - precise overrides can be added without removing safety nets
+-- - the strictest matching rule wins naturally
+function BuildMusicIntroCooldownBuckets(context, regionKey, poolName, fileDataID)
+    local introConfig = GetUserMusicIntroCooldownConfig()
+    local buckets = {}
+    local seenBuckets = {}
+    local resolvedRegionKey = NormalizeMusicRegionKey(regionKey or (context and context.regionKey))
+    local defaultSeconds = introConfig and introConfig.defaultSeconds or MUSIC_INTRO_REPEAT_COOLDOWN
+
+    AddMusicIntroCooldownBucket(buckets, seenBuckets, "default", "default", defaultSeconds)
+
+    if introConfig and type(introConfig.byRegion) == "table" and resolvedRegionKey then
+        AddMusicIntroCooldownBucket(
+            buckets,
+            seenBuckets,
+            "region:" .. resolvedRegionKey,
+            "region " .. resolvedRegionKey,
+            introConfig.byRegion[resolvedRegionKey]
+        )
+    end
+
+    if introConfig and type(introConfig.byZone) == "table" and context and context.zoneKey ~= "" then
+        AddMusicIntroCooldownBucket(
+            buckets,
+            seenBuckets,
+            "zone:" .. context.zoneKey,
+            "zone " .. context.zoneKey,
+            introConfig.byZone[context.zoneKey]
+        )
+    end
+
+    if introConfig and type(introConfig.bySubZone) == "table" and context and context.subZoneKey ~= "" then
+        AddMusicIntroCooldownBucket(
+            buckets,
+            seenBuckets,
+            "subzone:" .. context.subZoneKey,
+            "subzone " .. context.subZoneKey,
+            introConfig.bySubZone[context.subZoneKey]
+        )
+    end
+
+    if introConfig and type(introConfig.byArea) == "table" and context then
+        local locationRuleKey = BuildMusicLocationRuleKey(context.zoneKey, context.subZoneKey)
+        if locationRuleKey then
+            AddMusicIntroCooldownBucket(
+                buckets,
+                seenBuckets,
+                "area:" .. locationRuleKey,
+                "area " .. locationRuleKey,
+                introConfig.byArea[locationRuleKey]
+            )
+        end
+    end
+
+    if introConfig and type(introConfig.byPool) == "table" then
+        local poolRuleKey = BuildMusicPoolRuleKey(resolvedRegionKey, poolName)
+        if poolRuleKey then
+            AddMusicIntroCooldownBucket(
+                buckets,
+                seenBuckets,
+                "pool:" .. poolRuleKey,
+                "pool " .. poolRuleKey,
+                introConfig.byPool[poolRuleKey]
+            )
+        end
+    end
+
+    if introConfig and type(introConfig.byTrackID) == "table" and fileDataID then
+        AddMusicIntroCooldownBucket(
+            buckets,
+            seenBuckets,
+            "track:" .. tostring(fileDataID),
+            "track " .. tostring(fileDataID),
+            introConfig.byTrackID[fileDataID]
+        )
+    end
+
+    return buckets
+end
+
+function ShouldPlayMusicIntro(context, regionKey, poolName, fileDataID)
+    if not (BElfVRDB and BElfVRDB.musicUseIntro and fileDataID) then
+        return false
+    end
+
+    local introHistory = GetMusicIntroHistoryStore()
+    if not introHistory then
+        return true
+    end
+
+    local now = GetStableTimestampSeconds()
+    local strongestBlock = nil
+
+    for _, bucket in ipairs(BuildMusicIntroCooldownBuckets(context, regionKey, poolName, fileDataID)) do
+        local lastPlayedAt = tonumber(introHistory[bucket.historyKey])
+        if lastPlayedAt then
+            local elapsed = now - lastPlayedAt
+            if elapsed < bucket.seconds then
+                local remaining = math.ceil(bucket.seconds - elapsed)
+                if not strongestBlock or remaining > strongestBlock.remaining then
+                    strongestBlock = {
+                        label = bucket.label,
+                        remaining = remaining,
+                    }
+                end
+            end
+        end
+    end
+
+    if strongestBlock then
+        LogMusic("Skipping intro because cooldown is still active for " ..
+            strongestBlock.label .. " (" .. tostring(strongestBlock.remaining) .. "s left).")
+        RecordMusicTrace("Skipped intro cooldown=" .. tostring(strongestBlock.label) ..
+            " remaining=" .. tostring(strongestBlock.remaining))
+        return false
+    end
+
+    return true
+end
+
+function RememberMusicIntroPlayback(context, regionKey, poolName, fileDataID)
+    local introHistory = GetMusicIntroHistoryStore()
+    if not introHistory then
+        return
+    end
+
+    local now = GetStableTimestampSeconds()
+    for _, bucket in ipairs(BuildMusicIntroCooldownBuckets(context, regionKey, poolName, fileDataID)) do
+        introHistory[bucket.historyKey] = now
+    end
+end
+
+function GetConfiguredMusicIntroDefaultCooldown()
+    local introConfig = GetUserMusicIntroCooldownConfig()
+    return NormalizeConfiguredCooldownSeconds(introConfig and introConfig.defaultSeconds) or MUSIC_INTRO_REPEAT_COOLDOWN
+end
 
 
 -- ============================================================
@@ -180,6 +792,7 @@ local DB_DEFAULTS = {
     musicUseIntro = true,
     musicTraceEnabled = false,
     musicTraceLog = {},
+    musicIntroHistory = {},
     guidGenderOverrides = {},
     guidRoleOverrides = {},
     genderOverrides = {},
@@ -224,13 +837,21 @@ local state = {
     musicLastNight = nil,
     musicWasInSupportedZone = false,
     musicTrackCooldowns = {},
-    musicIntroCooldowns = {},
     musicUpdateAccumulator = 0,
     musicIntroPending = false,
     musicManualStop = false,
     musicLastNativeStopAt = 0,
     musicNativeVolumeForced = false,
     musicNativeVolumeBackup = nil,
+    musicAmbienceForced = false,
+    musicAmbienceEnabledBackup = nil,
+    -- `nil` means "unknown yet"; first context evaluation will force-sync.
+    musicTrackedMutesApplied = nil,
+    musicTrackedMuteSignature = nil,
+    musicTrackedMutedIDs = nil,
+    musicStartupPurgeInProgress = false,
+    musicStartupPurgeIgnoreNextCVar = false,
+    musicStartupPurgeReason = nil,
 }
 
 local ui = {
@@ -259,29 +880,26 @@ local ui = {
 local raceTooltip = CreateFrame("GameTooltip", ADDON_NAME .. "RaceTooltip", nil, "GameTooltipTemplate")
 raceTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
 
--- Built-in NPC-ID fixes for Midnight records that report bad metadata.
--- Add more entries here as you discover them:
--- ["123456"] = "female"
-local DEFAULT_GENDER_OVERRIDES = {}
+DEFAULT_GENDER_OVERRIDES = BuildNormalizedNPCOverrideMap(
+    GetConfigValue("voice", "overrides", "genderByNPCID") or {},
+    {
+        male = true,
+        female = true,
+    }
+)
 
--- Built-in role defaults by NPC ID.
--- Valid roles: "military", "noble", "standard"
-local DEFAULT_ROLE_OVERRIDES = {}
+DEFAULT_ROLE_OVERRIDES = BuildNormalizedNPCOverrideMap(
+    GetConfigValue("voice", "overrides", "roleByNPCID") or {},
+    {
+        military = true,
+        noble = true,
+        standard = true,
+    }
+)
 
--- Built-in name fallbacks for NPCs that do not expose race/gossip data cleanly.
--- This is useful for repeated ambient NPC names where Blizzard hides useful metadata.
-local DEFAULT_NAME_PROFILES = {
-    ["lyrendal"] = {
-        role = "standard",
-        vendor = true,
-    },
-    ["mahra treebender"] = {
-        exclude = true,
-    },
-    ["silvermoon resident"] = {
-        role = "standard",
-    },
-}
+DEFAULT_NAME_PROFILES = BuildNormalizedNameProfileMap(
+    GetConfigValue("voice", "profiles", "byName") or {}
+)
 
 
 -- ============================================================
@@ -297,7 +915,7 @@ end
 
 -- Separate music logging keeps zone/music spam out of the normal
 -- voice debug stream unless the user explicitly asks for it.
-local function LogMusic(msg)
+LogMusic = function(msg)
     if BElfVRDB and BElfVRDB.musicVerbose then
         print("|cff7FD4FF[BElfVR Music]|r " .. tostring(msg))
     end
@@ -323,7 +941,7 @@ local function AppendMusicTraceLine(msg)
     local hour = date("%H:%M:%S")
     local line = "[" .. tostring(hour or "??:??:??") .. "] " .. tostring(msg)
     local log = BElfVRDB.musicTraceLog
-    local maxEntries = 1200
+    local maxEntries = MUSIC_TRACE_MAX_ENTRIES
 
     log[#log + 1] = line
 
@@ -337,12 +955,50 @@ local function AppendMusicTraceLine(msg)
     return true
 end
 
-local function RecordMusicTrace(msg)
+RecordMusicTrace = function(msg)
     if not (BElfVRDB and BElfVRDB.musicTraceEnabled) then
         return
     end
 
     AppendMusicTraceLine(msg)
+end
+
+local function GetPendingCVarRestore(cvarName)
+    if not (BElfVRDB and type(BElfVRDB.pendingCVarRestores) == "table") then
+        return nil
+    end
+
+    local restoreValue = BElfVRDB.pendingCVarRestores[cvarName]
+    if restoreValue == nil then
+        return nil
+    end
+
+    return tostring(restoreValue)
+end
+
+local function RememberPendingCVarRestore(cvarName, restoreValue)
+    if not (BElfVRDB and cvarName and restoreValue ~= nil) then
+        return
+    end
+
+    if type(BElfVRDB.pendingCVarRestores) ~= "table" then
+        BElfVRDB.pendingCVarRestores = {}
+    end
+
+    if BElfVRDB.pendingCVarRestores[cvarName] == nil then
+        BElfVRDB.pendingCVarRestores[cvarName] = tostring(restoreValue)
+    end
+end
+
+local function ClearPendingCVarRestore(cvarName)
+    if not (BElfVRDB and type(BElfVRDB.pendingCVarRestores) == "table") then
+        return
+    end
+
+    BElfVRDB.pendingCVarRestores[cvarName] = nil
+    if next(BElfVRDB.pendingCVarRestores) == nil then
+        BElfVRDB.pendingCVarRestores = nil
+    end
 end
 
 local function ShowHelpTooltip(self, title, text)
@@ -366,6 +1022,18 @@ end
 
 local function CountEntries(list)
     return list and #list or 0
+end
+
+local function CountKeys(map)
+    if not map then
+        return 0
+    end
+
+    local count = 0
+    for _ in pairs(map) do
+        count = count + 1
+    end
+    return count
 end
 
 -- Returns whether the user currently allows the music channel.
@@ -407,6 +1075,108 @@ local function GetNPCIDFromGUID(guid)
     return npcID
 end
 
+local function IsInBloodElfFallbackArea()
+    local zoneName = GetRealZoneText() or GetZoneText() or ""
+    local subZoneName = GetSubZoneText() or ""
+    local zoneKey = string.lower(zoneName)
+    local subZoneKey = string.lower(subZoneName)
+
+    if BLOOD_ELF_FALLBACK_ZONES[zoneKey] == true then
+        return true, "zone", zoneName, subZoneName
+    end
+
+    if subZoneKey ~= "" and BLOOD_ELF_FALLBACK_ZONES[subZoneKey] == true then
+        return true, "subzone", zoneName, subZoneName
+    end
+
+    local zoneToken = NormalizeAreaMatchToken(zoneName)
+    if zoneToken ~= "" and BLOOD_ELF_VOICE_SCOPE_TOKENS[zoneToken] then
+        return true, "zone-token", zoneName, subZoneName
+    end
+
+    local subZoneToken = NormalizeAreaMatchToken(subZoneName)
+    if subZoneToken ~= "" and BLOOD_ELF_VOICE_SCOPE_TOKENS[subZoneToken] then
+        return true, "subzone-token", zoneName, subZoneName
+    end
+
+    local mapTokens = GetCurrentMapLineageTokens()
+    for token in pairs(mapTokens) do
+        if BLOOD_ELF_VOICE_SCOPE_TOKENS[token] then
+            return true, "map", zoneName, subZoneName
+        end
+    end
+
+    return false, "none", zoneName, subZoneName
+end
+
+local function GetUnitTooltipIdentity(unit)
+    local info = {
+        hasBloodElfRace = false,
+        hasExplicitNonBloodElfRace = false,
+        explicitRaceToken = nil,
+        hasChildMarker = false,
+    }
+
+    if not UnitExists(unit) or UnitIsPlayer(unit) then
+        return info
+    end
+
+    if BElfVRDB and BElfVRDB.verbose then
+        Log("Scanning tooltip for race data on target: " .. (UnitName(unit) or "<unknown>"))
+    end
+
+    raceTooltip:ClearLines()
+    raceTooltip:SetUnit(unit)
+
+    for i = 2, raceTooltip:NumLines() do
+        local fontString = _G[raceTooltip:GetName() .. "TextLeft" .. i]
+        local text = fontString and fontString:GetText()
+        if text and BElfVRDB and BElfVRDB.verbose then
+            Log("Tooltip line " .. i .. ": " .. text)
+        end
+
+        if text then
+            local normalized = string.lower(text)
+
+            for _, raceToken in ipairs(BLOOD_ELF_TOOLTIP_RACE_TOKENS) do
+                if strfind(normalized, raceToken, 1, true) ~= nil then
+                    info.hasBloodElfRace = true
+                    break
+                end
+            end
+
+            if not info.hasChildMarker then
+                for _, childToken in ipairs(BLOOD_ELF_TOOLTIP_CHILD_TOKENS) do
+                    if strfind(normalized, childToken, 1, true) ~= nil then
+                        info.hasChildMarker = true
+                        break
+                    end
+                end
+            end
+
+            if not info.hasBloodElfRace and not info.hasExplicitNonBloodElfRace then
+                for _, raceToken in ipairs(KNOWN_NON_BLOOD_ELF_RACE_TOKENS) do
+                    if strfind(normalized, raceToken, 1, true) ~= nil then
+                        info.hasExplicitNonBloodElfRace = true
+                        info.explicitRaceToken = raceToken
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    raceTooltip:Hide()
+    raceTooltip:ClearLines()
+
+    if info.hasBloodElfRace then
+        info.hasExplicitNonBloodElfRace = false
+        info.explicitRaceToken = nil
+    end
+
+    return info
+end
+
 local function IsLikelyBloodElfFallback(unit, allowWithoutGossip)
     if not UnitExists(unit) or UnitIsPlayer(unit) then
         return false
@@ -422,20 +1192,18 @@ local function IsLikelyBloodElfFallback(unit, allowWithoutGossip)
             " gossipShown=" .. tostring(canGossip))
     end
 
-    local zoneName = string.lower(GetRealZoneText() or GetZoneText() or "")
-    local subZoneName = string.lower(GetSubZoneText() or "")
-    local zoneAllowed = BLOOD_ELF_FALLBACK_ZONES[zoneName]
-    if zoneAllowed == nil and subZoneName ~= "" then
-        zoneAllowed = BLOOD_ELF_FALLBACK_ZONES[subZoneName]
-    end
-
-    if zoneAllowed ~= true then
+    local zoneAllowed, scopeSource, zoneName, subZoneName = IsInBloodElfFallbackArea()
+    if not zoneAllowed then
         if BElfVRDB and BElfVRDB.verbose then
             Log("Fallback blocked outside Blood Elf zones: zone=" ..
-                tostring(zoneName ~= "" and zoneName or "?") ..
-                " subzone=" .. tostring(subZoneName ~= "" and subZoneName or "?"))
+                tostring(zoneName ~= "" and string.lower(zoneName) or "?") ..
+                " subzone=" .. tostring(subZoneName ~= "" and string.lower(subZoneName) or "?"))
         end
         return false
+    end
+
+    if BElfVRDB and BElfVRDB.verbose then
+        Log("Fallback zone scope accepted via " .. tostring(scopeSource))
     end
 
     if creatureType == "Humanoid" and (sex == 2 or sex == 3) and (canGossip or allowWithoutGossip) then
@@ -471,11 +1239,37 @@ end
 --  interaction code so future music tuning stays local.
 -- ============================================================
 
+local function AppendUniqueMusicIDs(targetList, seen, sourceList)
+    if not sourceList then
+        return
+    end
+
+    for _, id in ipairs(sourceList) do
+        if not seen[id] then
+            seen[id] = true
+            targetList[#targetList + 1] = id
+        end
+    end
+end
+
+local function BuildBaseTrackedMusicMuteList()
+    local ids = {}
+    local seen = {}
+
+    AppendUniqueMusicIDs(ids, seen, BElfVR_NewMusicIDs)
+    AppendUniqueMusicIDs(ids, seen, BElfVR_SupplementalMusicMuteIDs)
+
+    return ids
+end
+
 local function GetMusicStats()
     local introCount = BElfVR_TBCMusic and CountEntries(BElfVR_TBCMusic.intro) or 0
     local dayCount = BElfVR_TBCMusic and CountEntries(BElfVR_TBCMusic.day) or 0
     local nightCount = BElfVR_TBCMusic and CountEntries(BElfVR_TBCMusic.night) or 0
-    local mutedCount = CountEntries(BElfVR_NewMusicIDs)
+    local mutedCount = CountEntries(BuildBaseTrackedMusicMuteList())
+    local catalogCount = CountEntries(BElfVR_MidnightAllMusicIDs)
+    local catalogFamilyCount = CountKeys(BElfVR_MidnightMusicFamilyIDs)
+    local supplementalCount = CountEntries(BElfVR_SupplementalMusicMuteIDs)
     local regionalCount = 0
 
     if BElfVR_TBCMusicRegions then
@@ -492,12 +1286,72 @@ local function GetMusicStats()
         dayCount = dayCount,
         nightCount = nightCount,
         mutedCount = mutedCount,
+        catalogCount = catalogCount,
+        catalogFamilyCount = catalogFamilyCount,
+        supplementalCount = supplementalCount,
         regionalCount = regionalCount,
     }
 end
 
 local function IsMusicReplacementActive()
     return BElfVRDB and BElfVRDB.enabled and BElfVRDB.musicEnabled and BElfVRDB.muteNewMusic
+end
+
+local function BuildTrackedMusicMuteList(regionKey)
+    local ids = BuildBaseTrackedMusicMuteList()
+    local seen = {}
+
+    for _, id in ipairs(ids) do
+        seen[id] = true
+    end
+
+    if RegionalMusicMuteIDs and regionKey then
+        AppendUniqueMusicIDs(ids, seen, RegionalMusicMuteIDs[regionKey])
+    end
+
+    return ids
+end
+
+-- Keep tracked native music file muting scoped to supported Blood Elf music
+-- regions so unrelated zones are never muted by this addon.
+local function SetTrackedMusicMutesActive(shouldMute, regionKey, reason)
+    local wantsMute = shouldMute and true or false
+    local desiredSignature = wantsMute and tostring(regionKey or "base") or "off"
+    if state.musicTrackedMuteSignature == desiredSignature then
+        return
+    end
+
+    if state.musicTrackedMutedIDs then
+        for _, id in ipairs(state.musicTrackedMutedIDs) do
+            UnmuteSoundFile(id)
+        end
+        state.musicTrackedMutedIDs = nil
+    end
+
+    if not wantsMute then
+        state.musicTrackedMutesApplied = false
+        state.musicTrackedMuteSignature = "off"
+        return
+    end
+
+    local activeMuteIDs = BuildTrackedMusicMuteList(regionKey)
+    if #activeMuteIDs == 0 then
+        state.musicTrackedMutesApplied = false
+        state.musicTrackedMuteSignature = "off"
+        return
+    end
+
+    for _, id in ipairs(activeMuteIDs) do
+        MuteSoundFile(id)
+    end
+
+    state.musicTrackedMutesApplied = true
+    state.musicTrackedMuteSignature = desiredSignature
+    state.musicTrackedMutedIDs = activeMuteIDs
+    LogMusic("Muted " .. #activeMuteIDs .. " tracked music file(s) for region " .. tostring(regionKey or "base") .. ".")
+    RecordMusicTrace("Applied tracked music mutes reason=" .. tostring(reason or "update") ..
+        " region=" .. tostring(regionKey or "base") ..
+        " count=" .. tostring(#activeMuteIDs))
 end
 
 local function GetCurrentGameHour()
@@ -567,20 +1421,7 @@ local function GetMusicTrackPool(regionKey, poolName)
 end
 
 local function ShouldQueueMusicIntro(regionKey)
-    if not (BElfVRDB and BElfVRDB.musicUseIntro and regionKey) then
-        return false
-    end
-
-    local now = GetTime()
-    local lastIntroAt = state.musicIntroCooldowns and state.musicIntroCooldowns[regionKey]
-    if lastIntroAt and (now - lastIntroAt) < MUSIC_INTRO_REPEAT_COOLDOWN then
-        local remaining = math.ceil(MUSIC_INTRO_REPEAT_COOLDOWN - (now - lastIntroAt))
-        LogMusic("Skipping intro for region " .. regionKey .. " because intro cooldown is still active (" .. remaining .. "s left).")
-        RecordMusicTrace("Skipped intro for region=" .. regionKey .. " cooldownRemaining=" .. tostring(remaining))
-        return false
-    end
-
-    return true
+    return BElfVRDB and BElfVRDB.musicUseIntro and regionKey and true or false
 end
 
 -- Builds a compact context snapshot from the player's current
@@ -592,28 +1433,45 @@ local function GetMusicContext()
     local subZoneName = GetSubZoneText() or ""
     local zoneKey = string.lower(zoneName)
     local subZoneKey = string.lower(subZoneName)
-    local supportedByZone = BLOOD_ELF_MUSIC_ZONES[zoneKey] == true
-    local supportedBySubZone = BLOOD_ELF_MUSIC_SUBZONES[subZoneKey] == true
+    local overrideRegionKey, overrideMatchSource = ResolveMusicSubZoneRegionOverride(subZoneName, subZoneKey)
+    local hasDirectSubZoneSupport = BLOOD_ELF_MUSIC_SUBZONES[subZoneKey] == true
+        or overrideRegionKey ~= nil
+    local inMusicScope, musicScopeSource = ResolveBloodElfMusicScope(zoneName, subZoneName, hasDirectSubZoneSupport)
+    local nativeOnlyZone = AreaHasNativeOnlyMusic(zoneName)
+    local nativeOnlySubZone = AreaHasNativeOnlyMusic(subZoneName)
+    local nativeOnly = nativeOnlyZone or nativeOnlySubZone
+    local supportedByZone = BLOOD_ELF_MUSIC_ZONES[zoneKey] == true and inMusicScope and not nativeOnly
+    local supportedBySubZone = hasDirectSubZoneSupport and inMusicScope and not nativeOnly
     local supported = supportedByZone or supportedBySubZone
     local isResting = IsResting() and true or false
     local isNight = IsNightTimeForMusic()
     local isIndoor = (subZoneKey ~= "" and subZoneKey ~= zoneKey)
-    local regionKey = NormalizeMusicRegionKey(MUSIC_SUBZONE_REGION_OVERRIDES[subZoneKey])
-    local looksLikeAmani = (strfind(subZoneKey, "amani", 1, true) ~= nil)
-        or (strfind(subZoneKey, "zeb'", 1, true) ~= nil)
+    local regionKey = nil
+    local normalizedSubZoneToken = NormalizeAreaMatchToken(subZoneName)
+    local patternRegionKey = nil
 
-    if regionKey then
-        -- Explicit subzone override wins.
-    elseif looksLikeAmani then
-        regionKey = MUSIC_REGION_AMANI
-    elseif zoneKey == "eversong woods" then
-        regionKey = MUSIC_REGION_EVERSONG
-    elseif zoneKey == "silvermoon city" or zoneKey == "sanctum of light" then
-        regionKey = MUSIC_REGION_SILVERMOON
-    elseif supportedBySubZone then
-        regionKey = MUSIC_REGION_SILVERMOON
-    elseif supported and supportedByZone then
-        regionKey = NormalizeMusicRegionKey(zoneKey)
+    if normalizedSubZoneToken ~= "" then
+        for token, configuredRegionKey in pairs(MUSIC_NORMALIZED_SUBZONE_PATTERN_REGION_OVERRIDES) do
+            if strfind(normalizedSubZoneToken, token, 1, true) ~= nil then
+                patternRegionKey = configuredRegionKey
+                break
+            end
+        end
+    end
+
+    if inMusicScope and not nativeOnly then
+        regionKey = overrideRegionKey
+        if regionKey then
+            -- Explicit subzone override wins.
+        elseif patternRegionKey then
+            regionKey = patternRegionKey
+        elseif MUSIC_ZONE_REGION_OVERRIDES[zoneKey] then
+            regionKey = MUSIC_ZONE_REGION_OVERRIDES[zoneKey]
+        elseif supportedBySubZone then
+            regionKey = DEFAULT_SUPPORTED_SUBZONE_REGION
+        elseif supported and supportedByZone then
+            regionKey = NormalizeMusicRegionKey(zoneKey)
+        end
     end
 
     return {
@@ -624,6 +1482,12 @@ local function GetMusicContext()
         supported = supported,
         supportedByZone = supportedByZone,
         supportedBySubZone = supportedBySubZone,
+        inMusicScope = inMusicScope,
+        musicScopeSource = musicScopeSource,
+        overrideMatchSource = overrideMatchSource,
+        nativeOnly = nativeOnly,
+        nativeOnlyZone = nativeOnlyZone,
+        nativeOnlySubZone = nativeOnlySubZone,
         isResting = isResting,
         isNight = isNight,
         isIndoor = isIndoor,
@@ -647,8 +1511,76 @@ local function StopInjectedMusic(fadeOutMS)
     state.musicExpectedEndTime = 0
 end
 
+local function RestoreNativeMusicVolume(reason)
+    if not (SetCVar and GetCVar) then
+        return
+    end
+
+    local restoreValue = state.musicNativeVolumeBackup or GetPendingCVarRestore("Sound_MusicVolume")
+    if restoreValue == nil then
+        return
+    end
+
+    state.musicNativeVolumeForced = false
+    state.musicNativeVolumeBackup = nil
+
+    if GetCVar("Sound_MusicVolume") ~= tostring(restoreValue) then
+        SetCVar("Sound_MusicVolume", tostring(restoreValue))
+    end
+
+    ClearPendingCVarRestore("Sound_MusicVolume")
+    LogMusic("Restored native music volume after leaving replacement-music control.")
+    RecordMusicTrace("Restored Sound_MusicVolume reason=" .. tostring(reason or "update"))
+end
+
+local function RestoreGlobalMusicEnabledSetting(reason)
+    if not (SetCVar and GetCVar) then
+        return
+    end
+
+    local restoreValue = GetPendingCVarRestore("Sound_EnableMusic")
+    if restoreValue == nil then
+        return
+    end
+
+    if GetCVar("Sound_EnableMusic") ~= tostring(restoreValue) then
+        SetCVar("Sound_EnableMusic", tostring(restoreValue))
+    end
+
+    ClearPendingCVarRestore("Sound_EnableMusic")
+    LogMusic("Restored global music enable state after " .. tostring(reason or "update") .. ".")
+    RecordMusicTrace("Restored Sound_EnableMusic reason=" .. tostring(reason or "update"))
+end
+
+local function RestoreNativeAmbienceSetting(reason)
+    if not (SetCVar and GetCVar) then
+        return
+    end
+
+    local restoreValue = state.musicAmbienceEnabledBackup or GetPendingCVarRestore("Sound_EnableAmbience")
+    if restoreValue == nil then
+        return
+    end
+
+    state.musicAmbienceForced = false
+    state.musicAmbienceEnabledBackup = nil
+
+    if GetCVar("Sound_EnableAmbience") ~= tostring(restoreValue) then
+        SetCVar("Sound_EnableAmbience", tostring(restoreValue))
+    end
+
+    ClearPendingCVarRestore("Sound_EnableAmbience")
+    LogMusic("Restored ambient channel after leaving replacement-music control.")
+    RecordMusicTrace("Restored Sound_EnableAmbience reason=" .. tostring(reason or "update"))
+end
+
 local function SetNativeMusicVolumeSuppressed(shouldSuppress, reason)
-    if not (MUSIC_SUPPRESS_NATIVE_WITH_VOLUME and SetCVar and GetCVar) then
+    if not (SetCVar and GetCVar) then
+        return
+    end
+
+    if not MUSIC_SUPPRESS_NATIVE_WITH_VOLUME then
+        RestoreNativeMusicVolume(reason or "volume suppression disabled")
         return
     end
 
@@ -657,6 +1589,7 @@ local function SetNativeMusicVolumeSuppressed(shouldSuppress, reason)
         if not state.musicNativeVolumeForced then
             state.musicNativeVolumeBackup = currentVolume
             state.musicNativeVolumeForced = true
+            RememberPendingCVarRestore("Sound_MusicVolume", currentVolume)
             LogMusic("Temporarily forcing native music volume to 0 while replacement music is active.")
             RecordMusicTrace("Forced Sound_MusicVolume=0 reason=" .. tostring(reason or "update"))
         end
@@ -667,20 +1600,31 @@ local function SetNativeMusicVolumeSuppressed(shouldSuppress, reason)
         return
     end
 
-    if not state.musicNativeVolumeForced then
+    RestoreNativeMusicVolume(reason)
+end
+
+local function SetNativeAmbienceSuppressed(shouldSuppress, reason)
+    if not (SetCVar and GetCVar) then
         return
     end
 
-    local restoreValue = state.musicNativeVolumeBackup
-    state.musicNativeVolumeForced = false
-    state.musicNativeVolumeBackup = nil
+    if shouldSuppress then
+        if not state.musicAmbienceForced then
+            local currentEnabled = GetCVar("Sound_EnableAmbience")
+            state.musicAmbienceEnabledBackup = currentEnabled
+            state.musicAmbienceForced = true
+            RememberPendingCVarRestore("Sound_EnableAmbience", currentEnabled)
+            LogMusic("Temporarily disabling ambient channel to block overlapping native Deatholme audio.")
+            RecordMusicTrace("Forced Sound_EnableAmbience=0 reason=" .. tostring(reason or "update"))
+        end
 
-    if restoreValue ~= nil then
-        SetCVar("Sound_MusicVolume", tostring(restoreValue))
+        if GetCVar("Sound_EnableAmbience") ~= "0" then
+            SetCVar("Sound_EnableAmbience", "0")
+        end
+        return
     end
 
-    LogMusic("Restored native music volume after leaving replacement-music control.")
-    RecordMusicTrace("Restored Sound_MusicVolume reason=" .. tostring(reason or "update"))
+    RestoreNativeAmbienceSetting(reason)
 end
 
 -- Some Midnight tracks can restart underneath injected playback even
@@ -706,7 +1650,7 @@ local function EnforceNativeMusicSuppression(reason, forceNow)
     if forceNow then
         LogMusic("Issued StopMusic() native guard [" .. tostring(reason or "update") .. "].")
         RecordMusicTrace("Issued StopMusic native guard reason=" .. tostring(reason or "update"))
-    else
+    elseif reason ~= "heartbeat" then
         LogMusic("Issued periodic StopMusic() native guard pulse.")
     end
 end
@@ -731,6 +1675,38 @@ local function ResetMusicState(stopPlayback)
     state.musicLastGlobalMusicEnabled = nil
     state.musicLastNativeStopAt = 0
     SetNativeMusicVolumeSuppressed(false, "reset")
+    SetNativeAmbienceSuppressed(false, "reset")
+end
+
+local function ShutdownMusicState(reason)
+    if state.musicHandle or state.musicCurrentTrackID then
+        LogMusic("Shutting down injected music for " .. tostring(reason or "shutdown") .. ".")
+        RecordMusicTrace("Shutdown music reason=" .. tostring(reason or "shutdown"))
+    end
+
+    StopInjectedMusic(0)
+
+    if StopMusic then
+        StopMusic()
+        state.musicLastNativeStopAt = GetTime()
+    end
+
+    SetTrackedMusicMutesActive(false, nil, tostring(reason or "shutdown"))
+    state.musicCurrentAreaKey = nil
+    state.musicCurrentRegionKey = nil
+    state.musicLastContextSignature = nil
+    state.musicLastZoneName = nil
+    state.musicLastSubZoneName = nil
+    state.musicLastResting = nil
+    state.musicLastIndoor = nil
+    state.musicLastNight = nil
+    state.musicWasInSupportedZone = false
+    state.musicTrackCooldowns = {}
+    state.musicUpdateAccumulator = 0
+    state.musicIntroPending = false
+    state.musicLastGlobalMusicEnabled = nil
+
+    RestoreInterruptedTemporaryCVars(tostring(reason or "shutdown"))
 end
 
 -- If the track should already be over based on its known duration,
@@ -833,7 +1809,6 @@ local function ChooseMusicTrack(poolName, tracks)
     end
 
     local chosen = eligible[math.random(#eligible)]
-    state.musicTrackCooldowns[chosen] = now
     LogMusic("Selected " .. tostring(poolName or "?") .. " track ID " .. chosen .. " from " .. #eligible .. " eligible candidate(s).")
     RecordMusicTrace("Selected pool=" .. tostring(poolName or "?") .. " track=" .. tostring(chosen) ..
         " eligible=" .. tostring(#eligible))
@@ -866,6 +1841,7 @@ local function PlayMusicTrack(fileDataID, poolName, reason)
     state.musicCurrentPool = poolName
     state.musicLastTrackStartedAt = GetTime()
     state.musicExpectedEndTime = state.musicLastTrackStartedAt + ((BElfVR_TBCMusicDurations and BElfVR_TBCMusicDurations[fileDataID]) or MUSIC_TRACK_ROTATE_SECONDS)
+    state.musicTrackCooldowns[fileDataID] = state.musicLastTrackStartedAt
 
     LogMusic("Playing " .. tostring(poolName or "?") .. " music track ID " .. fileDataID ..
         " (" .. tostring(reason or "unspecified") .. ")")
@@ -884,8 +1860,16 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
 
     local context = GetMusicContext()
     local contextSignature = context.areaKey
+    local shouldMuteTrackedMusic = context.supported and BElfVRDB.enabled and BElfVRDB.musicEnabled and BElfVRDB.muteNewMusic
+    SetTrackedMusicMutesActive(shouldMuteTrackedMusic, context.regionKey, reason)
     local shouldSuppressNativeVolume = context.supported and IsMusicReplacementActive() and IsGlobalMusicEnabled()
     SetNativeMusicVolumeSuppressed(shouldSuppressNativeVolume, reason)
+    local shouldSuppressNativeAmbience = context.supported
+        and IsMusicReplacementActive()
+        and IsGlobalMusicEnabled()
+        and context.regionKey ~= nil
+        and MUSIC_NATIVE_AMBIENCE_SUPPRESS_REGIONS[context.regionKey] == true
+    SetNativeAmbienceSuppressed(shouldSuppressNativeAmbience, reason)
 
     if not IsGlobalMusicEnabled() then
         state.musicCurrentAreaKey = context.areaKey
@@ -903,8 +1887,12 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
             tostring(context.zoneName ~= "" and context.zoneName or "<none>") ..
             " subzone=" .. tostring(context.subZoneName ~= "" and context.subZoneName or "<none>") ..
             " region=" .. tostring(context.regionKey or "<none>") ..
+            " scope=" .. tostring(context.inMusicScope) ..
+            " scopeSource=" .. tostring(context.musicScopeSource or "none") ..
+            " overrideSource=" .. tostring(context.overrideMatchSource or "none") ..
             " supported(zone)=" .. tostring(context.supportedByZone) ..
             " supported(subzone)=" .. tostring(context.supportedBySubZone) ..
+            " nativeOnly=" .. tostring(context.nativeOnly) ..
             " resting=" .. tostring(context.isResting) ..
             " indoorLike=" .. tostring(context.isIndoor) ..
             " phase=" .. (context.isNight and "night" or "day"))
@@ -912,8 +1900,12 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
             " zone=" .. tostring(context.zoneName ~= "" and context.zoneName or "<none>") ..
             " subzone=" .. tostring(context.subZoneName ~= "" and context.subZoneName or "<none>") ..
             " region=" .. tostring(context.regionKey or "<none>") ..
+            " scope=" .. tostring(context.inMusicScope) ..
+            " scopeSource=" .. tostring(context.musicScopeSource or "none") ..
+            " overrideSource=" .. tostring(context.overrideMatchSource or "none") ..
             " supportedZone=" .. tostring(context.supportedByZone) ..
             " supportedSubZone=" .. tostring(context.supportedBySubZone) ..
+            " nativeOnly=" .. tostring(context.nativeOnly) ..
             " resting=" .. tostring(context.isResting) ..
             " indoorLike=" .. tostring(context.isIndoor) ..
             " phase=" .. (context.isNight and "night" or "day"))
@@ -1001,20 +1993,25 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
     local poolName
     local trackPool
     local resolvedRegionKey = context.regionKey
+    local nextTrack
 
     if state.musicIntroPending then
         poolName = "intro"
         trackPool, resolvedRegionKey = GetMusicTrackPool(context.regionKey, "intro")
+        nextTrack = ChooseMusicTrack(poolName, trackPool)
         state.musicIntroPending = false
-        if trackPool and context.regionKey then
-            state.musicIntroCooldowns[context.regionKey] = GetTime()
+
+        if not ShouldPlayMusicIntro(context, resolvedRegionKey, poolName, nextTrack) then
+            poolName = context.isNight and "night" or "day"
+            trackPool, resolvedRegionKey = GetMusicTrackPool(context.regionKey, poolName)
+            nextTrack = ChooseMusicTrack(poolName, trackPool)
         end
     else
         poolName = context.isNight and "night" or "day"
         trackPool, resolvedRegionKey = GetMusicTrackPool(context.regionKey, poolName)
+        nextTrack = ChooseMusicTrack(poolName, trackPool)
     end
 
-    local nextTrack = ChooseMusicTrack(poolName, trackPool)
     if nextTrack then
         local resolvedPoolName = poolName
         if resolvedRegionKey and resolvedRegionKey ~= context.regionKey then
@@ -1023,6 +2020,9 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
             resolvedPoolName = tostring(resolvedRegionKey) .. ":" .. poolName
         end
         local didPlay = PlayMusicTrack(nextTrack, resolvedPoolName, reason or (areaChanged and "area change" or "rotation"))
+        if didPlay and poolName == "intro" then
+            RememberMusicIntroPlayback(context, resolvedRegionKey, poolName, nextTrack)
+        end
         if not didPlay and context.regionKey == MUSIC_REGION_AMANI then
             local fallbackPoolName = context.isNight and "night" or "day"
             local fallbackPool, fallbackRegionKey = GetMusicTrackPool(MUSIC_REGION_EVERSONG_SOUTH, fallbackPoolName)
@@ -1067,7 +2067,38 @@ local function MigrateSavedVariables()
         BElfVRDB.roleOverrides = {}
     end
 
+    if currentVersion < 4 and type(BElfVRDB.musicIntroHistory) ~= "table" then
+        BElfVRDB.musicIntroHistory = {}
+    end
+
     BElfVRDB.schemaVersion = DB_SCHEMA_VERSION
+end
+
+local function RestoreNativeDialogSetting()
+    if not (SetCVar and GetCVar) then
+        return
+    end
+
+    local restoreValue = state.dialogPrevEnabled or GetPendingCVarRestore("Sound_EnableDialog")
+    if restoreValue == nil then
+        return
+    end
+
+    state.dialogSuppressToken = state.dialogSuppressToken + 1
+    state.dialogPrevEnabled = nil
+
+    if GetCVar("Sound_EnableDialog") ~= tostring(restoreValue) then
+        SetCVar("Sound_EnableDialog", tostring(restoreValue))
+    end
+
+    ClearPendingCVarRestore("Sound_EnableDialog")
+end
+
+RestoreInterruptedTemporaryCVars = function(reason)
+    RestoreGlobalMusicEnabledSetting(reason)
+    RestoreNativeMusicVolume(reason)
+    RestoreNativeAmbienceSetting(reason)
+    RestoreNativeDialogSetting()
 end
 
 local function GetUnitVORangeTier(unit)
@@ -1116,8 +2147,12 @@ local function ApplyDialogSuppressionWindow()
 
     state.dialogSuppressToken = state.dialogSuppressToken + 1
     local suppressToken = state.dialogSuppressToken
-    state.dialogPrevEnabled = GetCVar("Sound_EnableDialog")
-    if state.dialogPrevEnabled ~= "0" then
+    if state.dialogPrevEnabled == nil then
+        state.dialogPrevEnabled = GetCVar("Sound_EnableDialog")
+        RememberPendingCVarRestore("Sound_EnableDialog", state.dialogPrevEnabled)
+    end
+
+    if GetCVar("Sound_EnableDialog") ~= "0" then
         SetCVar("Sound_EnableDialog", "0")
     end
 
@@ -1126,10 +2161,13 @@ local function ApplyDialogSuppressionWindow()
             return
         end
 
-        local restoreValue = state.dialogPrevEnabled or "1"
-        if GetCVar("Sound_EnableDialog") ~= restoreValue then
-            SetCVar("Sound_EnableDialog", restoreValue)
+        local restoreValue = state.dialogPrevEnabled or GetPendingCVarRestore("Sound_EnableDialog")
+        if restoreValue ~= nil and GetCVar("Sound_EnableDialog") ~= tostring(restoreValue) then
+            SetCVar("Sound_EnableDialog", tostring(restoreValue))
         end
+
+        state.dialogPrevEnabled = nil
+        ClearPendingCVarRestore("Sound_EnableDialog")
     end)
 end
 
@@ -1180,6 +2218,21 @@ local function GetDefaultNameProfile(unit)
     end
 
     return DEFAULT_NAME_PROFILES[string.lower(name)]
+end
+
+local function NameLooksLikeChildNPC(unit)
+    local name = string.lower(UnitName(unit) or "")
+    if name == "" then
+        return false
+    end
+
+    for _, token in ipairs(CHILD_NAME_TOKENS) do
+        if strfind(name, token, 1, true) ~= nil then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function GetConfiguredNameGenderOverride(unit)
@@ -1339,15 +2392,17 @@ local function GetVoiceRole(unit)
     end
 
     local name = string.lower(UnitName(unit) or "")
-    if string.find(name, "guard", 1, true) or
-       string.find(name, "ranger", 1, true) or
-       string.find(name, "captain", 1, true) or
-       string.find(name, "blood knight", 1, true) or
-       string.find(name, "champion", 1, true) then
-        return "military"
+
+    for _, token in ipairs(MILITARY_ROLE_NAME_TOKENS) do
+        if string.find(name, token, 1, true) then
+            return "military"
+        end
     end
-    if string.find(name, "lord", 1, true) or string.find(name, "lady", 1, true) or string.find(name, "noble", 1, true) then
-        return "noble"
+
+    for _, token in ipairs(NOBLE_ROLE_NAME_TOKENS) do
+        if string.find(name, token, 1, true) then
+            return "noble"
+        end
     end
 
     return "standard"
@@ -1421,40 +2476,8 @@ local function ResetInteractionState()
         StopSound(state.lastSoundHandle, 0)
         state.lastSoundHandle = nil
     end
-    if state.dialogPrevEnabled and GetCVar("Sound_EnableDialog") ~= state.dialogPrevEnabled then
-        SetCVar("Sound_EnableDialog", state.dialogPrevEnabled)
-    end
+    RestoreNativeDialogSetting()
     state.lastPlaybackTime = 0
-end
-
-local function IsBloodElfNPC(unit)
-    if not UnitExists(unit) or UnitIsPlayer(unit) then
-        return false
-    end
-
-    if BElfVRDB and BElfVRDB.verbose then
-        Log("Scanning tooltip for race data on target: " .. (UnitName(unit) or "<unknown>"))
-    end
-
-    raceTooltip:ClearLines()
-    raceTooltip:SetUnit(unit)
-
-    for i = 2, raceTooltip:NumLines() do
-        local fontString = _G[raceTooltip:GetName() .. "TextLeft" .. i]
-        local text = fontString and fontString:GetText()
-        if text and BElfVRDB and BElfVRDB.verbose then
-            Log("Tooltip line " .. i .. ": " .. text)
-        end
-        if text and string.find(string.lower(text), "blood elf", 1, true) then
-            raceTooltip:Hide()
-            raceTooltip:ClearLines()
-            return true
-        end
-    end
-
-    raceTooltip:Hide()
-    raceTooltip:ClearLines()
-    return false
 end
 
 -- Returns "male", "female", or nil if the unit is not a Blood Elf NPC
@@ -1495,7 +2518,25 @@ local function GetBloodElfNPCGender(unit, allowHiddenRaceFallbackWithoutGossip)
         return profile.gender
     end
 
-    if not IsBloodElfNPC(unit) then
+    if NameLooksLikeChildNPC(unit) then
+        Log("Target name looks like a child NPC; keeping native voice: " .. tostring(UnitName(unit)))
+        return nil
+    end
+
+    local tooltipIdentity = GetUnitTooltipIdentity(unit)
+
+    if tooltipIdentity.hasChildMarker then
+        Log("Target looks like a child NPC; keeping native voice: " .. tostring(UnitName(unit)))
+        return nil
+    end
+
+    if not tooltipIdentity.hasBloodElfRace then
+        if tooltipIdentity.hasExplicitNonBloodElfRace then
+            Log("Target explicitly reports non-Blood-Elf race data (" ..
+                tostring(tooltipIdentity.explicitRaceToken or "?") .. "); fallback disabled.")
+            return nil
+        end
+
         if BElfVRDB and BElfVRDB.fallbackHumanoid and IsLikelyBloodElfFallback(unit, allowHiddenRaceFallbackWithoutGossip) then
             Log("Target race is hidden; using humanoid fallback classifier.")
         else
@@ -1534,15 +2575,6 @@ local function ApplyMutes()
         end
         Log("Muted " .. voiceCount .. " new voice file(s).")
     end
-
-    if BElfVRDB.musicEnabled and BElfVRDB.muteNewMusic and BElfVR_NewMusicIDs then
-        local musicCount = 0
-        for _, id in ipairs(BElfVR_NewMusicIDs) do
-            MuteSoundFile(id)
-            musicCount = musicCount + 1
-        end
-        LogMusic("Muted " .. musicCount .. " tracked Midnight music file(s).")
-    end
 end
 
 local function RemoveMutes()
@@ -1553,12 +2585,7 @@ local function RemoveMutes()
         Log("Unmuted all new voice files.")
     end
 
-    if BElfVR_NewMusicIDs then
-        for _, id in ipairs(BElfVR_NewMusicIDs) do
-            UnmuteSoundFile(id)
-        end
-        LogMusic("Unmuted all tracked Midnight music files.")
-    end
+    SetTrackedMusicMutesActive(false, nil, "remove mutes")
 end
 
 
@@ -1637,19 +2664,25 @@ local function RefreshUI()
         local currentTrack = state.musicCurrentTrackID and tostring(state.musicCurrentTrackID) or "none"
         local currentPool = state.musicCurrentPool or "none"
         local traceCount = BElfVRDB.musicTraceLog and #BElfVRDB.musicTraceLog or 0
+        local introHistoryCount = CountKeys(BElfVRDB.musicIntroHistory)
 
         ui.musicStatusText:SetText(
             "Music mode: " .. (BElfVRDB.musicEnabled and "Enabled" or "Disabled") ..
-            "    Mute tracked Midnight music: " .. musicMuteState ..
+            "    Mute tracked supported-zone music: " .. musicMuteState ..
             "\nMusic verbose: " .. musicVerboseState ..
             "    Use intro on fresh entry: " .. introState ..
+            "\nIntro default cooldown: " .. tostring(GetConfiguredMusicIntroDefaultCooldown()) .. "s" ..
+            "    Stored intro cooldown buckets: " .. tostring(introHistoryCount) ..
             "\nMusic trace recorder: " .. traceState ..
             "    Trace lines stored: " .. traceCount ..
-            "\nMuted Midnight music IDs: " .. musicStats.mutedCount ..
+            "\nTracked music mute IDs: " .. musicStats.mutedCount ..
+            "    Catalog IDs loaded: " .. musicStats.catalogCount ..
+            "\nCatalog families loaded: " .. musicStats.catalogFamilyCount ..
+            "    Supplemental IDs loaded: " .. musicStats.supplementalCount ..
             "\nTBC music pools: " .. musicStats.introCount .. " intro / " .. musicStats.dayCount .. " day / " .. musicStats.nightCount .. " night" ..
-            "\nRegional override IDs loaded: " .. musicStats.regionalCount ..
+            "\nRegional TBC pool IDs loaded: " .. musicStats.regionalCount ..
             "\nCurrent injected track: " .. currentTrack .. " (" .. currentPool .. ")" ..
-            "\nBehavior: replacement music runs only while tracked Midnight music muting is active."
+            "\nBehavior: replacement music runs only while tracked supported-zone music muting is active."
         )
     end
 end
@@ -1699,18 +2732,9 @@ local function SetMusicEnabled(enabled)
     BElfVRDB.musicEnabled = enabled and true or false
 
     if BElfVRDB.enabled and BElfVRDB.musicEnabled then
-        if BElfVRDB.muteNewMusic and BElfVR_NewMusicIDs then
-            for _, id in ipairs(BElfVR_NewMusicIDs) do
-                MuteSoundFile(id)
-            end
-        end
         EvaluateMusicState("music enabled", true)
     else
-        if BElfVR_NewMusicIDs then
-            for _, id in ipairs(BElfVR_NewMusicIDs) do
-                UnmuteSoundFile(id)
-            end
-        end
+        SetTrackedMusicMutesActive(false, nil, "music disabled")
         ResetMusicState(true)
     end
 
@@ -1720,17 +2744,10 @@ end
 local function SetMusicMuteEnabled(enabled)
     BElfVRDB.muteNewMusic = enabled and true or false
 
-    if BElfVRDB.enabled and BElfVRDB.musicEnabled and BElfVRDB.muteNewMusic and BElfVR_NewMusicIDs then
-        for _, id in ipairs(BElfVR_NewMusicIDs) do
-            MuteSoundFile(id)
-        end
+    if BElfVRDB.enabled and BElfVRDB.musicEnabled and BElfVRDB.muteNewMusic then
         EvaluateMusicState("music mute enabled", true)
     else
-        if BElfVR_NewMusicIDs then
-            for _, id in ipairs(BElfVR_NewMusicIDs) do
-                UnmuteSoundFile(id)
-            end
-        end
+        SetTrackedMusicMutesActive(false, nil, "music mute disabled")
         ResetMusicState(true)
     end
 
@@ -1776,11 +2793,55 @@ end
 local function SetSuppressNativeDialogEnabled(enabled)
     BElfVRDB.suppressNativeDialog = enabled and true or false
 
-    if not BElfVRDB.suppressNativeDialog and state.dialogPrevEnabled and GetCVar("Sound_EnableDialog") ~= state.dialogPrevEnabled then
-        SetCVar("Sound_EnableDialog", state.dialogPrevEnabled)
+    if not BElfVRDB.suppressNativeDialog then
+        RestoreNativeDialogSetting()
     end
 
     RefreshUI()
+end
+
+local function BeginStartupMusicChannelPurge(reason)
+    if state.musicStartupPurgeInProgress then
+        return true
+    end
+
+    if not (SetCVar and GetCVar and C_Timer and C_Timer.After) then
+        return false
+    end
+
+    local currentMusicEnabled = tostring(GetCVar("Sound_EnableMusic") or "1")
+    if currentMusicEnabled ~= "1" then
+        return false
+    end
+
+    state.musicStartupPurgeInProgress = true
+    state.musicStartupPurgeIgnoreNextCVar = false
+    state.musicStartupPurgeReason = tostring(reason or "startup purge")
+
+    RememberPendingCVarRestore("Sound_EnableMusic", currentMusicEnabled)
+    LogMusic("Temporarily toggling Sound_EnableMusic to flush lingering pre-reload addon music.")
+    RecordMusicTrace("Startup purge begin reason=" .. tostring(reason or "startup purge"))
+
+    SetCVar("Sound_EnableMusic", "0")
+
+    C_Timer.After(MUSIC_STARTUP_PURGE_DELAY_SECONDS, function()
+        local restoreValue = GetPendingCVarRestore("Sound_EnableMusic") or currentMusicEnabled
+        if GetCVar("Sound_EnableMusic") ~= tostring(restoreValue) then
+            state.musicStartupPurgeIgnoreNextCVar = true
+            SetCVar("Sound_EnableMusic", tostring(restoreValue))
+        end
+
+        ClearPendingCVarRestore("Sound_EnableMusic")
+        state.musicStartupPurgeInProgress = false
+
+        local resumedReason = state.musicStartupPurgeReason or "startup purge"
+        state.musicStartupPurgeReason = nil
+
+        EvaluateMusicState(resumedReason .. " resume", true)
+        RefreshUI()
+    end)
+
+    return true
 end
 
 local function SetCurrentTargetGenderOverride(value)
@@ -2031,12 +3092,12 @@ local function CreateSettingsUI()
     subtitle:SetPoint("TOPLEFT", SETTINGS_CONTENT_SIDE_MARGIN + 4, -34)
     subtitle:SetWidth(SETTINGS_CONTENT_WIDTH - 16)
     subtitle:SetJustifyH("LEFT")
-    subtitle:SetText("Controls for restoring TBC Blood Elf voices and first-pass Silvermoon / Eversong music replacement.")
+    subtitle:SetText("Controls for restoring TBC Blood Elf voices and Midnight Quel'Thalas music replacement.")
 
-    ui.voiceTabButton = CreateActionButton(panel, 92, 22, "Voice", SETTINGS_TAB_START_X, -60, function()
+    ui.voiceTabButton = CreateActionButton(panel, SETTINGS_TAB_BUTTON_WIDTH, SETTINGS_TAB_BUTTON_HEIGHT, "Voice", SETTINGS_TAB_START_X, -60, function()
         SetSettingsTab("voice")
     end)
-    ui.musicTabButton = CreateActionButton(panel, 92, 22, "Music", SETTINGS_TAB_START_X + 98, -60, function()
+    ui.musicTabButton = CreateActionButton(panel, SETTINGS_TAB_BUTTON_WIDTH, SETTINGS_TAB_BUTTON_HEIGHT, "Music", SETTINGS_TAB_START_X + SETTINGS_TAB_BUTTON_WIDTH + SETTINGS_TAB_BUTTON_GAP, -60, function()
         SetSettingsTab("music")
     end)
 
@@ -2178,8 +3239,8 @@ local function CreateSettingsUI()
         SetMusicEnabled(self:GetChecked())
     end)
 
-    ui.musicMuteCheckbox = CreateCheckbox(musicSection, 2, -60, "Mute tracked Midnight Silvermoon music files",
-        "Silences the currently tracked Midnight Silvermoon / Eversong music IDs so the addon's TBC music can replace them.",
+    ui.musicMuteCheckbox = CreateCheckbox(musicSection, 2, -60, "Mute tracked supported-zone music files",
+        "Silences the tracked Midnight and Blizzard zone-music IDs used in supported Midnight Quel'Thalas areas so the addon's TBC music can replace them cleanly.",
         function(self)
         SetMusicMuteEnabled(self:GetChecked())
     end)
@@ -2212,7 +3273,7 @@ local function CreateSettingsUI()
     ui.musicStatusText:SetJustifyH("LEFT")
     ui.musicStatusText:SetJustifyV("TOP")
 
-    CreateActionButton(musicSection, 140, 24, "Test Intro", 6, -300, function()
+    local musicTestIntroButton = CreateActionButton(musicSection, 140, 24, "Test Intro", 6, -300, function()
         local introPool = GetMusicTrackPool(MUSIC_REGION_SILVERMOON, "intro")
         local trackID = introPool and introPool[1]
         if trackID then
@@ -2220,7 +3281,7 @@ local function CreateSettingsUI()
             RefreshUI()
         end
     end)
-    CreateActionButton(musicSection, 140, 24, "Test Day", 152, -300, function()
+    local musicTestDayButton = CreateActionButton(musicSection, 140, 24, "Test Day", 152, -300, function()
         local pool = GetMusicTrackPool(MUSIC_REGION_SILVERMOON, "day")
         local trackID = ChooseMusicTrack("day", pool)
         if trackID then
@@ -2228,7 +3289,7 @@ local function CreateSettingsUI()
             RefreshUI()
         end
     end)
-    CreateActionButton(musicSection, 140, 24, "Test Night", 298, -300, function()
+    local musicTestNightButton = CreateActionButton(musicSection, 140, 24, "Test Night", 298, -300, function()
         local pool = GetMusicTrackPool(MUSIC_REGION_SILVERMOON, "night")
         local trackID = ChooseMusicTrack("night", pool)
         if trackID then
@@ -2236,7 +3297,7 @@ local function CreateSettingsUI()
             RefreshUI()
         end
     end)
-    CreateActionButton(musicSection, 212, 24, "Re-apply Music Mutes", 6, -332, function()
+    local musicReapplyButton = CreateActionButton(musicSection, 212, 24, "Re-apply Music Mutes", 6, -332, function()
         SetMusicMuteEnabled(true)
         if BElfVRDB.enabled and BElfVRDB.musicEnabled then
             print("|cff7FD4FF[BElfVR Music]|r Music mutes enabled and reapplied.")
@@ -2244,7 +3305,7 @@ local function CreateSettingsUI()
             print("|cff7FD4FF[BElfVR Music]|r Music mute option enabled. Mutes will apply when music logic is active.")
         end
     end)
-    CreateActionButton(musicSection, 212, 24, "Clear Music Trace", 224, -332, function()
+    local musicClearTraceButton = CreateActionButton(musicSection, 212, 24, "Clear Music Trace", 224, -332, function()
         BElfVRDB.musicTraceLog = {}
         if BElfVRDB.musicTraceEnabled then
             RecordMusicTrace("Trace log cleared.")
@@ -2252,15 +3313,34 @@ local function CreateSettingsUI()
         RefreshUI()
         print("|cff7FD4FF[BElfVR Music]|r Cleared the recorded music trace buffer.")
     end)
-    CreateActionButton(musicSection, 212, 24, "Restore Midnight Music", 6, -364, function()
+    local musicRestoreButton = CreateActionButton(musicSection, 212, 24, "Restore Midnight Music", 6, -364, function()
         SetMusicMuteEnabled(false)
-        print("|cff7FD4FF[BElfVR Music]|r Unmuted all tracked Midnight music IDs.")
+        print("|cff7FD4FF[BElfVR Music]|r Unmuted all tracked supported-zone music IDs.")
     end)
-    CreateActionButton(musicSection, 212, 24, "Force Music Refresh", 224, -364, function()
+    local musicRefreshButton = CreateActionButton(musicSection, 212, 24, "Force Music Refresh", 224, -364, function()
         EvaluateMusicState("manual ui refresh", true)
         RefreshUI()
         print("|cff7FD4FF[BElfVR Music]|r Forced a music re-evaluation.")
     end)
+
+    -- Anchor music actions under the live status block so added status
+    -- lines do not overlap the buttons on future refactors.
+    musicTestIntroButton:ClearAllPoints()
+    musicTestIntroButton:SetPoint("TOPLEFT", ui.musicStatusText, "BOTTOMLEFT", 0, -16)
+    musicTestDayButton:ClearAllPoints()
+    musicTestDayButton:SetPoint("TOPLEFT", musicTestIntroButton, "TOPRIGHT", 6, 0)
+    musicTestNightButton:ClearAllPoints()
+    musicTestNightButton:SetPoint("TOPLEFT", musicTestDayButton, "TOPRIGHT", 6, 0)
+
+    musicReapplyButton:ClearAllPoints()
+    musicReapplyButton:SetPoint("TOPLEFT", musicTestIntroButton, "BOTTOMLEFT", 0, -8)
+    musicClearTraceButton:ClearAllPoints()
+    musicClearTraceButton:SetPoint("TOPLEFT", musicReapplyButton, "TOPRIGHT", 6, 0)
+
+    musicRestoreButton:ClearAllPoints()
+    musicRestoreButton:SetPoint("TOPLEFT", musicReapplyButton, "BOTTOMLEFT", 0, -8)
+    musicRefreshButton:ClearAllPoints()
+    musicRefreshButton:SetPoint("TOPLEFT", musicRestoreButton, "TOPRIGHT", 6, 0)
 
     ui.panel = panel
     SetSettingsTab("voice")
@@ -2367,13 +3447,16 @@ local function OnTargetChanged()
 
     if state.lastNPCGender and state.lastTargetGUID and newGUID ~= state.lastTargetGUID and not (GossipFrame and GossipFrame:IsShown()) then
         local elapsed = GetTime() - state.lastGreetTime
-        if elapsed <= BYE_GRACE_PERIOD and elapsed >= TARGET_LOSS_BYE_DELAY then
+        if elapsed <= BYE_GRACE_PERIOD and elapsed >= TARGET_LOSS_BYE_DELAY and elapsed <= TARGET_LOSS_BYE_MAX_AGE then
             Log("Triggering target-loss bye for target=" .. tostring(state.lastTargetName or "<unknown>") ..
                 " npc=" .. tostring(GetNPCIDFromGUID(state.lastTargetGUID) or "?"))
             PlayRandomTBC(state.lastNPCGender, "bye", state.lastNPCRole, true)
         elseif elapsed < TARGET_LOSS_BYE_DELAY then
             Log("Skipping target-loss bye for target=" .. tostring(state.lastTargetName or "<unknown>") ..
                 " because target was not held long enough.")
+        elseif elapsed > TARGET_LOSS_BYE_MAX_AGE then
+            Log("Skipping target-loss bye for target=" .. tostring(state.lastTargetName or "<unknown>") ..
+                " because the target was lost too late to sound believable.")
         end
         state.lastNPCGender = nil
         state.lastNPCRole = nil
@@ -2405,7 +3488,7 @@ local function OnTargetChanged()
     end
 
     local now = GetTime()
-    if guid == state.lastTargetChangeGUID and (now - state.lastTargetChangeTime) < 0.35 then
+    if guid == state.lastTargetChangeGUID and (now - state.lastTargetChangeTime) < TARGET_SELECT_DEDUPE_WINDOW then
         return
     end
 
@@ -2452,6 +3535,7 @@ frame:RegisterEvent("ZONE_CHANGED_INDOORS")
 frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 frame:RegisterEvent("PLAYER_UPDATE_RESTING")
 frame:RegisterEvent("CVAR_UPDATE")
+frame:RegisterEvent("PLAYER_LOGOUT")
 
 frame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
@@ -2464,6 +3548,7 @@ frame:SetScript("OnEvent", function(self, event, arg1)
             end
         end
         MigrateSavedVariables()
+        RestoreInterruptedTemporaryCVars("addon loaded")
 
     elseif event == "PLAYER_LOGIN" then
         CreateSettingsUI()
@@ -2472,7 +3557,14 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         print("|cffFFD700[BElfRestore]|r Loaded. Type |cffFFFFFF/belr|r to open the UI (legacy |cffFFFFFF/belvr|r also works).")
 
     elseif event == "PLAYER_ENTERING_WORLD" then
-        EvaluateMusicState("entering world", true)
+        local startupMusicContext = GetMusicContext()
+        local shouldPurgeStartupMusic = startupMusicContext.supported
+            and IsMusicReplacementActive()
+            and IsGlobalMusicEnabled()
+
+        if not shouldPurgeStartupMusic or not BeginStartupMusicChannelPurge("entering world") then
+            EvaluateMusicState("entering world", true)
+        end
         RefreshUI()
 
     elseif event == "PLAYER_TARGET_CHANGED" then
@@ -2497,10 +3589,25 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
     elseif event == "CVAR_UPDATE" then
         local cvarName = tostring(arg1 or "")
+        if cvarName == "Sound_EnableMusic" then
+            if state.musicStartupPurgeInProgress then
+                RefreshUI()
+                return
+            end
+
+            if state.musicStartupPurgeIgnoreNextCVar then
+                state.musicStartupPurgeIgnoreNextCVar = false
+                RefreshUI()
+                return
+            end
+        end
+
         if cvarName == "Sound_EnableMusic" or cvarName == "Sound_EnableAllSound" then
             EvaluateMusicState(event .. ":" .. cvarName, true)
             RefreshUI()
         end
+    elseif event == "PLAYER_LOGOUT" then
+        ShutdownMusicState("player logout")
     end
 end)
 
@@ -2510,6 +3617,10 @@ frame:SetScript("OnUpdate", function(self, elapsed)
     end
     if not IsMusicReplacementActive() then
         return
+    end
+
+    if state.musicWasInSupportedZone and (state.musicHandle or state.musicCurrentTrackID) and IsGlobalMusicEnabled() then
+        EnforceNativeMusicSuppression("heartbeat", false)
     end
 
     state.musicUpdateAccumulator = (state.musicUpdateAccumulator or 0) + elapsed
@@ -2579,11 +3690,11 @@ local function HandleSlashCommand(input)
 
     elseif cmd == "music mute on" then
         SetMusicMuteEnabled(true)
-        print("|cff7FD4FF[BElfVR Music]|r Tracked Midnight music muting: |cff00FF00ON|r")
+        print("|cff7FD4FF[BElfVR Music]|r Tracked supported-zone music muting: |cff00FF00ON|r")
 
     elseif cmd == "music mute off" then
         SetMusicMuteEnabled(false)
-        print("|cff7FD4FF[BElfVR Music]|r Tracked Midnight music muting: |cffFF4444OFF|r")
+        print("|cff7FD4FF[BElfVR Music]|r Tracked supported-zone music muting: |cffFF4444OFF|r")
 
     elseif cmd == "music verbose on" then
         SetMusicVerboseEnabled(true)
@@ -2744,6 +3855,7 @@ local function HandleSlashCommand(input)
     elseif cmd == "status" then
         local stats = GetVoiceStats()
         local musicStats = GetMusicStats()
+        local context = GetMusicContext()
         print("|cffFFD700[BElfVR]|r --- Status ---")
         print("  Addon enabled    : " .. tostring(BElfVRDB.enabled))
         print("  Muting new VO    : " .. tostring(BElfVRDB.muteNew))
@@ -2760,9 +3872,19 @@ local function HandleSlashCommand(input)
         print("  Muting new music : " .. tostring(BElfVRDB.muteNewMusic))
         print("  Music verbose    : " .. tostring(BElfVRDB.musicVerbose))
         print("  Music intro      : " .. tostring(BElfVRDB.musicUseIntro))
+        print("  Intro default CD : " .. tostring(GetConfiguredMusicIntroDefaultCooldown()) .. "s")
+        print("  Intro history    : " .. tostring(CountKeys(BElfVRDB.musicIntroHistory)) .. " bucket(s)")
         print("  Music muted IDs  : " .. musicStats.mutedCount)
+        print("  Catalog music IDs: " .. musicStats.catalogCount .. " across " .. musicStats.catalogFamilyCount .. " families")
+        print("  Supplemental IDs : " .. musicStats.supplementalCount)
         print("  TBC music  : " .. musicStats.introCount .. " intro / " .. musicStats.dayCount .. " day / " .. musicStats.nightCount .. " night")
         print("  Current music    : " .. tostring(state.musicCurrentTrackID or "none") .. " (" .. tostring(state.musicCurrentPool or "none") .. ")")
+        print("  Music zone       : " .. tostring(context.zoneName ~= "" and context.zoneName or "<none>"))
+        print("  Music subzone    : " .. tostring(context.subZoneName ~= "" and context.subZoneName or "<none>"))
+        print("  Music region     : " .. tostring(context.regionKey or "<none>") ..
+            " scope=" .. tostring(context.inMusicScope) ..
+            " scopeSource=" .. tostring(context.musicScopeSource or "none") ..
+            " overrideSource=" .. tostring(context.overrideMatchSource or "none"))
         print("  Music trace on   : " .. tostring(BElfVRDB.musicTraceEnabled))
         print("  Trace lines      : " .. tostring(BElfVRDB.musicTraceLog and #BElfVRDB.musicTraceLog or 0))
 
@@ -2819,7 +3941,7 @@ local function HandleSlashCommand(input)
         print("  |cffFFFFFF/belr music on|r / |cffFFFFFF/belr music off|r")
         print("                                              enable or disable the music replacement system")
         print("  |cffFFFFFF/belr music mute on|r / |cffFFFFFF/belr music mute off|r")
-        print("                                              toggle muting of tracked Midnight music IDs")
+        print("                                              toggle muting of tracked supported-zone music IDs")
         print("  |cffFFFFFF/belr music verbose|r / |cffFFFFFF/belr music verbose on|r / |cffFFFFFF/belr music verbose off|r")
         print("                                              toggle or set music routing debug output in chat")
         print("  |cffFFFFFF/belr music trace on|r / |cffFFFFFF/belr music trace off|r / |cffFFFFFF/belr music trace clear|r")

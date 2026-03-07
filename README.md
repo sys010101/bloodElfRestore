@@ -1,6 +1,6 @@
 # Blood Elf Restore
 
-Version: `0.5.0-alpha`
+Version: `0.6.0-alpha`
 
 ## Disclaimer
 
@@ -12,9 +12,9 @@ This addon is still in a very early stage of development. It is not really inten
 
 If that is not your thing, please abstain from low-value or useless comments.
 
-Blood Elf Restore is a World of Warcraft addon for Midnight-era Silvermoon that suppresses selected new Blood Elf NPC voice lines and injects original TBC-era Blood Elf voice sets during NPC interaction events.
+Blood Elf Restore is a World of Warcraft addon for Midnight-era Quel'Thalas that suppresses selected new Blood Elf NPC voice lines and injects original TBC-era Blood Elf voice sets during NPC interaction events.
 
-It now also includes a broader first-pass Quel'Thalas music layer that mutes tracked Midnight music FileDataIDs and injects old TBC regional music on the music channel.
+It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked supported-zone music FileDataIDs and injects old TBC regional music on the `Music` channel without intentionally touching unrelated zones.
 
 ## What The Addon Does
 
@@ -25,8 +25,8 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
 - Supports bye playback on gossip close
 - Supports bye playback when you click away from a recently greeted target
 - Supports pissed playback after repeated clicks on the same NPC
-- Mutes tracked Midnight Silvermoon / Eversong music FileDataIDs listed in `SoundData.lua`
-- Injects region-aware TBC intro/day/night music while you remain in supported Blood Elf music areas
+- Mutes tracked supported-zone music FileDataIDs listed in `SoundData.lua`
+- Injects region-aware TBC intro/day/night music while you remain in supported Midnight Quel'Thalas music areas
 - Uses shuffle-with-cooldown logic so the same TBC music track is strongly discouraged from repeating too soon
 - Can record music routing traces into SavedVariables for later analysis
 - Exposes an in-game settings and test UI via `/belr`
@@ -38,21 +38,25 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
 - Left-click greet playback works on recognized nearby targets
 - Right-click gossip greet playback works
 - Gossip close bye playback works
-- Target-loss bye playback works after a short post-greet delay
+- Target-loss bye playback works after a short post-greet delay and is skipped if the disengage happens too late to sound believable
 - Male and female TBC voice selection works with the current default reversed `UnitSex` mapping
 - GUID-based and name-based manual overrides work
 - Role-based voice pools work for `noble`, `standard`, and `military`
 - Test playback buttons cover male and female voice sets for all three roles
-- Rapid retargeting overlap is reduced by stop-handle logic, playback throttling, and target-loss delay rules
+- Rapid retargeting overlap is reduced by stop-handle logic, playback throttling, and target-loss bye delay/max-age rules
 - Far-distance left-click targeting uses fake distance falloff buckets instead of always playing
 - If WoW sound output is disabled (including the usual sound-effects toggle such as `Ctrl+S`), the addon does not inject replacement voices
 - Verbose logging now includes the NPC name in key trigger lines to make troubleshooting easier
-- First-pass music replacement works in supported Silvermoon / Eversong areas
+- Music replacement is now scoped to Midnight Quel'Thalas map lineage instead of broad zone text alone
 - Music logic currently recognizes:
   - `Silvermoon City`
   - `Eversong Woods`
   - `Sanctum of Light`
-  - selected supported subzones such as `The Bazaar`
+  - selected supported subzones such as `The Bazaar`, `Sunstrider Isle`, `Tranquillien`, `Sanctum of the Moon`, and `Wayfarer's Rest`
+- Native-only guards keep unsupported or intentionally excluded areas on Blizzard music:
+  - `Harandar`
+  - unrelated Midnight zones outside Quel'Thalas scope
+  - non-Midnight world zones
 - Region routing now distinguishes:
   - `silvermoon`
   - `eversong`
@@ -60,13 +64,23 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
   - `eversong_south`
   - `deatholme`
   - `amani`
+- `Ruins of Deatholme` now routes to the dedicated `deatholme` pool again, including a token fallback for small subzone naming shifts
 - Amani-style troll subzones now route to dedicated troll music logic:
   - explicit overrides for `Amani Pass`, `Zeb'Nowa`, and `Zeb'tela Ruins`
   - name-pattern fallback for subzones containing `amani` or `zeb'`
+- Midnight music muting is now applied only while you are actually in a supported music region; it is no longer globally applied on login
+- Supported interiors can now mute both Midnight `mus_120_*` music and Blizzard generic tavern / inn zonemusic to prevent overlap in places like `Wayfarer's Rest`
+- The generated Midnight catalog is loaded at runtime and currently provides the main music mute coverage, with Harandar families intentionally excluded
+- Replacement music now uses the real `Music` channel, so the in-game music slider controls both native and injected music consistently
+- Temporary CVar backups for music volume, ambience, and dialog are restored on area exit, `/reload`, and logout
 - Ctrl+M and global sound-toggle changes now trigger immediate music re-evaluation (`CVAR_UPDATE`) without waiting for periodic ticks
 - The settings UI is now split into separate `Voice` and `Music` tabs
+- Music-tab action buttons now anchor below the live status block so longer status text does not overlap the controls
 - Music can optionally play an intro cue on fresh entry, then rotate through day or night pools
+- Intro cooldown history is now persisted in SavedVariables, so `/reload` does not count as a fresh intro reset
+- Intro cooldown policy is now user-editable in `Config.lua` by region, zone, subzone, area (`zone||subzone`), pool, and exact FileDataID
 - Music trace recording can be enabled, walked through the city, and saved via `/reload` or logout for later tuning
+- `/belr status` now reports music region, scope source, override source, catalog counts, and supplemental mute counts
 
 ## What Does Not Work Perfectly
 
@@ -76,13 +90,13 @@ It now also includes a broader first-pass Quel'Thalas music layer that mutes tra
 - Some Midnight NPCs still require manual overrides because Blizzard hides or misreports metadata
 - Some NPCs still need explicit built-in profile exceptions (for example vendor-only or excluded non-Blood Elf false positives)
 - The hidden-race humanoid fallback is intentionally constrained to Blood Elf zones so unrelated humanoids elsewhere do not get Blood Elf VO
-- Mute coverage depends entirely on the FileDataIDs listed in `SoundData.lua`
+- Mute coverage depends on the generated Midnight catalog plus the manual and supplemental FileDataIDs listed in `SoundData.lua`
 - If Blizzard adds or swaps new Blood Elf VO assets, more mute IDs may be needed
 - Music replacement is an addon-side approximation, not a true engine-level override of Blizzard's internal zone music resolver
 - The addon cannot reliably read the exact native Midnight music FileDataID currently playing
 - Music transitions are smoother than a hard stop, but they are still limited by what `PlaySoundFile()` and `StopSound()` allow on the addon side
-- To reduce stubborn double-music bleed-through, injected replacement music uses the `Master` channel while native music volume is temporarily forced to `0` in supported replacement areas (then restored when leaving control)
-- Supported-zone continuity for interiors and enclave slices depends on the allow-lists in `BElfRestore.lua`
+- Music muting now depends on a generated Midnight catalog plus manually maintained supplemental IDs in `SoundData.lua`; anonymous `mus_1200_*` IDs or non-listfile SoundKit playback can still require manual follow-up
+- Supported-zone continuity for interiors and enclave slices depends on the scope tokens, native-only tokens, and subzone overrides in `BElfRestore.lua`
 
 ## Core Design
 
@@ -98,31 +112,45 @@ Because WoW does not let the addon attach those injected sounds to the NPC in 3D
 
 - fake distance falloff by distance buckets
 - short playback throttling
-- target-loss bye delay
+- target-loss bye delay plus a short maximum believable disengage window
 - brief dialog-channel suppression around injected playback
 
 The music system uses a similar approximation model:
 
-1. Mute known Midnight music FileDataIDs with `MuteSoundFile()`.
-2. Watch zone, subzone, resting, and day/night changes.
-3. Choose an intro/day/night TBC music track.
-4. Avoid immediate repeats with a per-track cooldown.
-5. Stop and restart the injected music with a short fade when the context changes.
+1. Build a tracked supported-zone mute set from generated Midnight `mus_120_*` families, manual non-catalog `mus_1200_*` seeds, and supplemental Blizzard zonemusic families used inside supported interiors.
+2. Resolve whether the current area is actually inside Midnight Quel'Thalas using zone text, subzone text, and parent map lineage.
+3. Keep native-only exclusions such as `Harandar` on Blizzard music even if the parent zone would otherwise qualify.
+4. Watch zone, subzone, resting, and day/night changes.
+5. Choose an intro/day/night TBC music track.
+6. Avoid immediate repeats with a per-track cooldown.
+7. Stop, fade, and re-evaluate the injected music when the context changes.
+8. Restore any temporary audio-setting backups when the addon leaves music control or the client reloads.
 
-In `0.5.0-alpha`, the music layer also:
+In `0.6.0-alpha`, the music layer also:
 
-- uses region-specific pools for broader Eversong, Sunstrider Isle, southern Eversong remastered areas, and a dedicated Deatholme pocket
-- adds dedicated Amani-region routing with verified Zul'Aman ambient IDs (`53825`-`53830`)
+- uses region-specific pools for broader Eversong, Sunstrider Isle, southern Eversong remastered areas, a dedicated Deatholme pocket, and Amani routing
+- loads a generated Midnight music catalog from wowdev/wow-listfile release `202603061837`
+- excludes Harandar music families from addon muting so Harandar stays native
+- supplements the Midnight catalog with Blizzard generic tavern / inn / rest-area zonemusic for supported interiors
 - avoids replaying intro cues too often with a separate intro cooldown
+- persists intro cooldown history across `/reload` and logout-safe SavedVariables flushes
+- reads intro cooldown rules from `Config.lua` instead of one hardcoded runtime constant
 - lets known tracks finish naturally instead of cutting them off with the old coarse timer
 - keeps `/belr music stop` idle until a real resume trigger occurs
+- preserves the player's music slider instead of intentionally forcing `Sound_MusicVolume=0` during steady-state replacement playback
 
 ## Main Files
 
+- `Config.lua`
+  User-editable policy layer for safe voice behavior, voice classification/scope rules, built-in name/ID overrides, music routing/scope/timing, intro cooldown rules, trace limits, and UI art/layout tuning.
 - `BElfRestore.lua`
   Main logic, UI, event handling, classification, overrides, playback rules.
 - `SoundData.lua`
-  New Midnight mute IDs plus TBC male/female voice pools, tracked Midnight music IDs, and TBC music pools.
+  New Midnight mute IDs plus TBC male/female voice pools, manual Midnight music seed IDs, supplemental supported-zone music mute IDs, and TBC music pools.
+- `Midnight_ID_catalog.lua`
+  Machine-readable Midnight `mus_120_*` music catalog generated from wowdev/wow-listfile and loaded at runtime before `SoundData.lua`.
+- `Midnight_ID_Index.md`
+  Human-readable Midnight music family index generated from wowdev/wow-listfile, with notes about runtime exclusions and supplemental mutes.
 - `TBC_ID_CATALOG.lua`
   Data-first TBC zone-music ID catalog (Quel'Thalas focus + Outland + key TBC instances) for future config authoring.
 - `TBC_ID_INDEX.md`
@@ -135,6 +163,7 @@ In `0.5.0-alpha`, the music layer also:
   Ongoing developer handoff notes.
 
 Catalog regeneration:
+- `tools/generate_midnight_catalog.ps1 -ListfilePath <path-to-community-listfile.csv> -ReleaseTag <tag>`
 - `tools/generate_tbc_catalog.ps1 -ListfilePath <path-to-community-listfile-withcapitals.csv> -ReleaseTag <tag>`
 
 ## Commands
@@ -150,7 +179,7 @@ General addon power:
 - `/belr off`
   Turns the addon off and stops its replacement behavior.
 - `/belr status`
-  Prints the addon's current settings and loaded counts in chat.
+  Prints the addon's current settings, loaded counts, intro cooldown summary, and current music zone / subzone / region context in chat.
 
 Voice muting and voice debug:
 - `/belr mute on`
@@ -224,9 +253,9 @@ Music controls:
 - `/belr music off`
   Turns the music replacement system off.
 - `/belr music mute on`
-  Mutes the tracked Midnight music IDs used by the music replacement layer.
+  Mutes the tracked supported-zone music IDs used by the music replacement layer.
 - `/belr music mute off`
-  Restores the tracked Midnight music IDs.
+  Restores the tracked supported-zone music IDs.
 - `/belr music verbose`
   Toggles detailed music routing messages in chat.
 - `/belr music verbose on`
@@ -271,11 +300,11 @@ Music test playback:
 - Invert NPC sex mapping toggle
 - Suppress native dialog during injected playback toggle
 - Enable replacement music logic
-- Mute tracked Midnight Silvermoon music files
+- Mute tracked supported-zone music files
 - Verbose music debug
 - Record music trace to SavedVariables
 - Play intro cue on fresh entry
-- Music status block
+- Music status block with region and ID counts
 - Test buttons for intro/day/night music
 - Re-apply music mutes
 - Clear music trace
@@ -296,10 +325,11 @@ Music test playback:
 - Role classification still uses name heuristics for many NPCs.
 - The role-pool slicing logic depends on the exact list order in `SoundData.lua`.
 - Legacy `genderOverrides` and `roleOverrides` are migrated once into a backup field, then reset in favor of GUID-based overrides.
-- To suppress stubborn double-music leaks, replacement music uses `Master` playback while native music volume is temporarily forced to `0` inside active supported-routing control.
-- Native suppression state is restored automatically when leaving replacement-music control.
+- Music replacement now uses the `Music` channel, so setting WoW's music slider to `0` will silence both native and injected music by design.
+- The generated Midnight catalog covers `mus_120_*` families, but manual follow-up may still be needed for anonymous `mus_1200_*` IDs or non-listfile SoundKit playback.
 - The music trace recorder does not create a standalone text file. It writes into SavedVariables, which WoW flushes to disk on `/reload` or logout.
 - Large trace captures should be done in a single pass and then cleared; the recorder keeps a capped ring buffer, not an infinite log.
+- `Config.lua` is a live code file, not a UI form. Keep its text keys lowercase and change one rule at a time.
 
 ## License
 
@@ -307,23 +337,26 @@ This project is released under the MIT License. See [LICENSE](C:\Program Files (
 
 ## Future Work
 
-1. Move editable defaults and heuristics into a separate `Config.lua`.
+1. Move additional tightly-coupled data-layout knobs into `Config.lua` only where doing so does not make the runtime easier to break.
 2. Expand mute coverage for additional Midnight Blood Elf VO assets.
 3. Add more exact built-in overrides for known problematic NPCs.
 4. Add optional UI controls for tuning fake distance falloff probabilities.
 5. Add a richer role model if more granular voice pools are needed.
-6. Expand the Silvermoon subzone allow-list based on trace recordings.
-7. Replace placeholder TOC metadata such as author information with final release metadata.
+6. Expand the Midnight Quel'Thalas scope and subzone allow-lists based on trace recordings.
+7. Capture additional anonymous `mus_1200_*` or non-listfile native music leaks if Blizzard introduces them.
+8. Replace placeholder TOC metadata such as author information with final release metadata.
 
 ## Recommended Testing Pass
 
 1. Test left-click greet on nearby, mid-range, and far-range targets.
 2. Test right-click greet and gossip close bye.
-3. Test target-loss bye after a short delay.
+3. Test target-loss bye after a short delay and confirm it does not fire if you keep the NPC selected, move far away, and only then drop target.
 4. Test male and female NPCs after `/reload`.
 5. Test `/belr force ...` and `/belr force-name ...` on known problematic NPCs.
 6. Test with verbose logging enabled when adding new mute IDs or overrides.
-7. Test `/belr music verbose on` while walking between Silvermoon subzones and interiors.
-8. Test `/belr music trace on`, run southern Eversong routes, then `/reload`, and inspect the SavedVariables trace for unexpected zone names or missing allow-list entries.
-9. During fast flying passes, use `/belr music note <text>` at the exact moment you hear a leak so the trace has a searchable marker.
+7. Test `/belr music verbose on` while walking between Silvermoon subzones and interiors, including at least one inn such as `Wayfarer's Rest`.
+8. Test `Ruins of Deatholme`, `Harandar`, and one unrelated world zone after `/reload` to confirm scope, native-only exclusions, and Deatholme routing.
+9. Test the in-game music slider before and after `/reload` while standing in a supported music zone.
+10. Test `/belr music trace on`, run southern Eversong routes, then `/reload`, and inspect the SavedVariables trace for unexpected zone names, missing allow-list entries, or unsupported native-only pockets.
+11. During fast flying passes, use `/belr music note <text>` at the exact moment you hear a leak so the trace has a searchable marker.
 

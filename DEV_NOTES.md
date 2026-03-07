@@ -3,11 +3,11 @@
 ## Current Purpose
 
 Current working version:
-- `0.5.0-alpha`
+- `0.6.0-alpha`
 
-This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Silvermoon while muting the newer Midnight replacement voice set.
+This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Quel'Thalas while muting the newer Midnight replacement voice set.
 
-It also now includes a broader first-pass music replacement layer for `Silvermoon City`, `Eversong Woods`, `Sunstrider Isle`, southern Eversong remastered subzones, and a dedicated `Ruins of Deatholme` pocket that can mute tracked Midnight music FileDataIDs and inject old TBC music on the music channel.
+It also now includes a scoped Midnight Quel'Thalas music replacement layer for `Silvermoon City`, `Eversong Woods`, `Sunstrider Isle`, southern Eversong remastered subzones, `Ruins of Deatholme`, and selected interiors. That layer mutes tracked supported-zone music FileDataIDs, injects old TBC music on the `Music` channel, and intentionally leaves unrelated zones native.
 
 Main behavior:
 - Mutes tracked Midnight Blood Elf voice FileDataIDs from `SoundData.lua`
@@ -16,16 +16,21 @@ Main behavior:
 - Plays TBC bye lines on gossip close
 - Plays TBC bye lines when you click away from a previously greeted target
 - Plays TBC pissed lines after repeated clicks on the same NPC
-- Mutes tracked Midnight Silvermoon / Eversong music FileDataIDs from `SoundData.lua`
-- Injects region-aware TBC intro/day/night music while you remain in supported Blood Elf zones
+- Mutes tracked supported-zone music FileDataIDs from `SoundData.lua` plus generated Midnight catalog data
+- Injects region-aware TBC intro/day/night music while you remain in supported Midnight Quel'Thalas zones
 - Uses a shuffle-with-cooldown music picker so the same TBC music track is strongly discouraged from repeating immediately
 
 ## Core Files
 
+- `Config.lua`
+  - User-editable policy layer
+  - Owns safe voice/music/UI policy knobs with commented examples and safety warnings
+  - Covers behavior timing, fallback scope/classification, built-in name/ID overrides, music routing/scope/timing, intro cooldowns, trace limits, and UI tuning
 - `SoundData.lua`
   - Holds all mute IDs for new Midnight voices
   - Holds all old TBC male/female voice FileDataIDs
-  - Holds tracked Midnight music mute IDs
+  - Holds manual Midnight music seed IDs
+  - Holds supplemental supported-zone music mute IDs for non-Midnight Blizzard zonemusic
   - Holds TBC Silvermoon intro/day/night music FileDataIDs
 - `BElfRestore.lua`
   - Main addon logic
@@ -36,6 +41,13 @@ Main behavior:
   - Role and gender overrides
 - `bloodElfRestore.toc`
   - Correct TOC name matching the addon folder
+  - Loads `Midnight_ID_catalog.lua` before `SoundData.lua`
+- `Midnight_ID_catalog.lua`
+  - Generated Midnight `mus_120_*` music catalog used at runtime
+  - Source-of-truth dataset for bulk Midnight music muting
+- `Midnight_ID_Index.md`
+  - Human-readable Midnight music family index generated from wowdev/wow-listfile
+  - Documents runtime exclusions and supplemental supported-zone notes
 - `TBC_ID_CATALOG.lua`
   - Generated TBC zone-music ID database for config/data authoring
   - Includes Quel'Thalas focus (`Eversong`, `Ghostlands`, `Zulaman`, `Sunwell`)
@@ -86,6 +98,7 @@ Behavior note:
 - Hovering checkboxes now shows plain-English help text for non-technical users
 - Verbose logs now include NPC names in key trigger messages
 - Music trace logs are stored in SavedVariables, not in a standalone text file, and are written to disk on `/reload` or logout
+- Music-tab action rows are anchored below the live music status text so status growth does not overlap the buttons
 
 ### NPC Detection Fixes
 
@@ -110,6 +123,7 @@ Added:
   - out of range: never plays
 - Dedupe window so right-click gossip does not immediately double-fire another greet
 - Bye playback when target is cleared/switched away from a previously greeted NPC
+- Target-loss bye now has both a minimum delay and a maximum believable age so late fly-away disengages do not still play point-blank farewell audio
 
 ### Gender / Role Overrides
 
@@ -175,8 +189,14 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
 
 ### Music Replacement Rule
 
-- TBC replacement music runs only when `Enable addon logic`, `Enable replacement music logic`, and `Mute tracked Midnight Silvermoon music files` are all enabled
-- If tracked music muting is disabled, the addon stops injecting TBC music so Midnight and TBC music do not stack
+- TBC replacement music runs only when `Enable addon logic`, `Enable replacement music logic`, and `Mute tracked supported-zone music files` are all enabled
+- If tracked music muting is disabled, the addon stops injecting TBC music so native and TBC music do not stack
+- Music ownership is now scoped to Midnight Quel'Thalas map lineage, not only broad zone text:
+  - zone name
+  - subzone name
+  - parent map lineage tokens
+- Native-only guards now explicitly keep some areas on Blizzard music even if the parent zone would otherwise qualify:
+  - `Harandar`
 - Supported broad music routing currently includes:
   - `Silvermoon City`
   - `Sanctum of Light`
@@ -195,30 +215,57 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - `Sanctum of the Moon`
   - several southern remastered subzones mapped into the `eversong_south` family
   - `Ruins of Deatholme` mapped into the dedicated `deatholme` family
+  - narrow token fallback for subzones containing `deatholme`
   - `Amani Pass`, `Zeb'Nowa`, and `Zeb'tela Ruins` mapped into the dedicated `amani` family
   - dynamic pattern fallback for troll-style subzone names containing `amani` or `zeb'`
+- The runtime mute set is now composed from three layers:
+  - generated Midnight `mus_120_*` family coverage from `Midnight_ID_catalog.lua`
+  - manual non-catalog Midnight seed IDs in `BElfVR_NewMusicIDs` (for `mus_1200_*` and similar gaps)
+  - supplemental Blizzard zonemusic IDs in `BElfVR_SupplementalMusicMuteIDs` for supported interiors such as inns / taverns
+- Runtime Midnight catalog exclusions now intentionally preserve Harandar families:
+  - `harandar_1`
+  - `harandar_2`
+  - `harandar_3`
+  - `lightbloom_harandar`
 - The music system checks:
   - zone changes
   - indoor-like subzone changes
   - resting state changes
   - in-game day/night phase
+  - relevant `CVAR_UPDATE` changes
 - A first-entry intro cue can optionally play before the day/night rotation
 - Intro cues now have a separate cooldown so they do not spam on quick re-entry
+- Intro cooldown history is persisted in `BElfVRDB.musicIntroHistory`, so `/reload` does not reset the intro timer
+- Intro cooldown policy is read from `Config.lua` and can be scoped by region, zone, subzone, area (`zone||subzone`), pool, and exact FileDataID
 - Known-duration tracks are now allowed to finish naturally instead of being cut off by the old coarse rotation timer
 - Long stays in the same supported area still have fallback periodic rotation for unknown-duration cases
 - The music shuffle system keeps recently played TBC tracks on a cooldown so the same track does not immediately repeat
 - Playback routing now keys off a stable region + day/night signature instead of tiny subzone churn, which greatly reduces constant restarts while moving around Silvermoon
-- Native music suppression now combines `StopMusic()` guard calls with temporary `Sound_MusicVolume=0` while supported replacement is active, and injected music is played on `Master` so native suppression does not cut the injected track
+- Injected replacement music now plays on the real `Music` channel, so the user's music slider controls both native and injected playback consistently
+- The old steady-state `Sound_MusicVolume=0` suppression path is disabled; the addon now relies on scoped `MuteSoundFile()` coverage plus `StopMusic()` guards instead of hijacking the slider
+- Temporary audio-setting backups are persisted in `BElfVRDB.pendingCVarRestores` and restored on area exit, addon load, `/reload`, and `PLAYER_LOGOUT`
+- `Sound_EnableAmbience` suppression remains a narrow Deatholme-specific fallback path, with the same persisted-restore safety
 - Ctrl+M and global music toggles now trigger immediate re-evaluation through `CVAR_UPDATE` handling
 - Intro cues are now queued only on true fresh supported-entry, not on every internal region swap
-- Music stop transitions currently use a longer fade than the first pass to reduce abrupt cutoffs when area routing changes
-- Music debug output now indicates whether the current area was matched by zone name or by subzone allow-list
+- Music debug output now indicates:
+  - support source
+  - scope source
+  - override source
+  - native-only state
 - `/belr music stop` now creates a real manual stop state and stays idle until a meaningful resume trigger occurs
 - Slash music test commands now use the same region-aware pool selection as the live music system
+- `/belr status` now reports:
+  - current music zone
+  - current subzone
+  - current region
+  - catalog counts
+  - supplemental counts
 - `/belr music note <text>` adds a one-line manual marker into `musicTraceLog` with current zone/subzone/region context (useful during high-speed flight mapping)
 - Music trace recording can capture:
   - context changes
   - support source (zone vs subzone)
+  - scope source
+  - override source
   - selected pool
   - selected track
   - skip reasons
@@ -249,7 +296,13 @@ Important:
 
 Add them to:
 - `BElfVR_NewVoiceIDs` in `SoundData.lua`
-- `BElfVR_NewMusicIDs` in `SoundData.lua` for music-specific mute IDs
+- `BElfVR_NewMusicIDs` in `SoundData.lua` for manual music-specific non-catalog IDs such as `mus_1200_*`
+- `BElfVR_SupplementalMusicMuteIDs` in `SoundData.lua` for non-Midnight Blizzard zonemusic that still appears inside supported Midnight Quel'Thalas interiors
+
+Preferred workflow for Midnight music coverage:
+- regenerate `Midnight_ID_catalog.lua` and `Midnight_ID_Index.md`
+- keep broad family coverage in the generated catalog
+- keep only true exceptions or non-catalog gaps in `SoundData.lua`
 
 ### Where To Add New Old TBC Sound IDs
 
@@ -270,6 +323,16 @@ Add them to:
 - Use this catalog as the source-of-truth dataset for future `config.lua` routing work.
 - Regeneration command:
   - `tools/generate_tbc_catalog.ps1 -ListfilePath <community-listfile-withcapitals.csv> -ReleaseTag <release-tag>`
+
+### Midnight Catalog Data Source
+
+- `Midnight_ID_catalog.lua` and `Midnight_ID_Index.md` are generated from wowdev/wow-listfile release `202603061837`.
+- Scope is Midnight music families under `sound/music/midnight/mus_120_*.mp3`.
+- The generated catalog is now loaded at runtime before `SoundData.lua`.
+- Runtime muting intentionally excludes Harandar families through `MIDNIGHT_CATALOG_MUTE_FAMILY_EXCLUSIONS`.
+- Runtime muting also supplements the catalog with manual `mus_1200_*` seeds and Blizzard tavern / inn zonemusic IDs for supported interiors.
+- Regeneration command:
+  - `tools/generate_midnight_catalog.ps1 -ListfilePath <community-listfile.csv> -ReleaseTag <release-tag>`
 
 Keep the current grouping/order:
 - noble block first
@@ -306,8 +369,24 @@ In `BElfRestore.lua`:
   - Lowercase zone names that should keep TBC music active
 - `BLOOD_ELF_MUSIC_SUBZONES`
   - Lowercase subzone names that should keep TBC music active even when Blizzard reports a different top-level zone
+- `BLOOD_ELF_MUSIC_SCOPE_TOKENS`
+  - Normalized map-lineage / zone tokens that allow the music system to take control
+- `BLOOD_ELF_MUSIC_NATIVE_ONLY_TOKENS`
+  - Normalized area tokens that must stay native even inside a broader supported parent zone
+- `MUSIC_SUBZONE_REGION_OVERRIDES`
+  - Exact lowercase subzone names that should route into a different TBC region family
+- `MUSIC_SUBZONE_REGION_TOKEN_OVERRIDES`
+  - Narrow token fallbacks for subzones whose exact names may drift slightly
+- `MIDNIGHT_CATALOG_MUTE_FAMILY_EXCLUSIONS`
+  - Midnight catalog families that should stay native even though they exist in the generated dataset
+- `BElfVR_SupplementalMusicMuteIDs`
+  - Non-Midnight Blizzard zonemusic IDs still worth muting inside supported interiors
 - `BElfVRDB.musicTraceLog`
   - User-captured music route trace buffer stored in SavedVariables
+- `BElfVRDB.pendingCVarRestores`
+  - Persisted temporary audio-setting backups for recovery after `/reload` or logout
+- `BElfVRDB.musicIntroHistory`
+  - Persisted intro cooldown timestamps keyed by config bucket (`default`, `region:...`, `pool:...`, `track:...`, etc.)
 
 ## Known Heuristics / Limitations
 
@@ -322,22 +401,89 @@ In `BElfRestore.lua`:
   - otherwise -> `standard`
 - Music replacement is a first-pass addon-side injector, not a true engine-level replacement of Blizzard's internal zone-music resolver
 - The addon can log area context changes for music, but it cannot reliably read the exact native Midnight music FileDataID that Blizzard's engine picked at runtime
+- The generated Midnight catalog covers `mus_120_*` families only; anonymous `mus_1200_*` IDs and non-listfile SoundKit playback still need manual discovery
 - Track rotation currently uses a configurable approximate timer, because addon Lua does not get a clean "this injected FileDataID finished" callback for this playback path
 - The music trace recorder is a capped ring buffer and intentionally trims old entries; it is meant for focused capture sessions, not permanent long-term logging
 
 ## Suggested Next Improvements
 
-1. Move community-editable defaults into a separate `Config.lua`
-2. Add a richer role model if needed:
+1. Add a richer role model if needed:
    - vendor
    - questgiver
    - trainer
    - civilian
-3. Add more built-in Midnight Silvermoon NPC overrides by exact `npc=...` IDs
-4. Add more comments near role layout offsets if more community editing is expected
-5. Consider deprecating the old `genderOverrides` / `roleOverrides` saved-variable fields entirely in a cleanup pass
-6. Expand the Silvermoon music zone/subzone allow-lists from recorded trace sessions
-7. Use recorded trace sessions to identify additional Midnight music FileDataIDs that still leak through and add them to `BElfVR_NewMusicIDs`
+2. Add more built-in Midnight Silvermoon NPC overrides by exact `npc=...` IDs
+3. Add more comments near role layout offsets if more community editing is expected
+4. Consider deprecating the old `genderOverrides` / `roleOverrides` saved-variable fields entirely in a cleanup pass
+5. Expand the Midnight Quel'Thalas scope tokens, native-only tokens, and subzone allow-lists from recorded trace sessions
+6. Use recorded trace sessions to identify additional anonymous `mus_1200_*` or non-listfile music playback that still leaks through
+
+## Session Update (2026-03-07 - Music Hardening, Catalog Refactor, and Documentation Pass)
+
+This session was the large cleanup after repeated music-overlap regressions in Deatholme, Harandar, and Silvermoon interiors.
+It also included a post-refactor load recovery after the new `Config.lua` policy extraction briefly pushed `BElfRestore.lua` over WoW's chunk-local limit and introduced a few ordering/syntax regressions.
+
+What changed:
+
+- Tightened music ownership to Midnight Quel'Thalas only:
+  - added map-lineage scope gating
+  - added native-only exclusion tokens
+  - kept Harandar native
+- Fixed Deatholme routing regressions:
+  - restored exact `Ruins of Deatholme` routing
+  - added `deatholme` token fallback for small subzone-name shifts
+  - re-darkened the dedicated TBC `deatholme` day pool
+- Reworked tracked music muting from a partial hand-maintained list into a generated-catalog model:
+  - added `Midnight_ID_catalog.lua`
+  - added `Midnight_ID_Index.md`
+  - added `tools/generate_midnight_catalog.ps1`
+  - updated `bloodElfRestore.toc` to load the generated catalog before `SoundData.lua`
+- Converted runtime Midnight muting to broad family coverage with explicit exclusions instead of hand-adding one family at a time:
+  - Harandar families are now excluded at the family level
+  - non-catalog `mus_1200_*` gaps still live in `BElfVR_NewMusicIDs`
+- Fixed Silvermoon inn overlap:
+  - added `BElfVR_SupplementalMusicMuteIDs`
+  - currently includes Blizzard tavern / inn / rest-area zonemusic IDs `53737`-`53778`
+  - these supplemental IDs are only applied while the addon owns a supported music region
+- Removed global login-time music muting:
+  - old `ApplyMutes` / `RemoveMutes` music behavior was too broad
+  - all music muting now flows through `SetTrackedMusicMutesActive`
+  - muting is now strictly region-scoped
+- Reworked mute-list building:
+  - added helper logic to build one deduped base mute set
+  - base set now includes catalog-backed Midnight data plus supplemental supported-zone data
+  - optional region-specific extra mutes can still be layered on top
+- Fixed music slider and temporary-audio-setting safety:
+  - replacement music now plays on `Music`, not `Master`
+  - steady-state slider hijacking is disabled
+  - persisted restore values were added for `Sound_MusicVolume`
+  - persisted restore values were added for `Sound_EnableAmbience`
+  - persisted restore values were added for `Sound_EnableDialog`
+  - recovery runs on addon load and `PLAYER_LOGOUT`
+- Expanded the real user-editable config surface:
+  - created `Config.lua`
+  - moved safe voice/music/UI policy tables out of hardcoded runtime blocks
+  - moved intro cooldown matching out of transient runtime-only state
+  - persisted intro cooldown history in `BElfVRDB.musicIntroHistory`
+  - intro cooldown rules can now be scoped by region, zone, subzone, area, pool, and exact FileDataID
+  - role heuristics, scope tokens, supported zones/subzones, region routing, built-in name profiles, trace limits, and UI art/layout settings are now config-backed
+- Expanded live debugging and status output:
+  - context lines now include `scope`, `scopeSource`, `overrideSource`, and `nativeOnly`
+  - `/belr status` now reports catalog counts and supplemental mute counts
+  - UI text now refers to tracked supported-zone music instead of tracked Midnight Silvermoon music
+
+Removed or superseded behavior:
+
+- Removed the assumption that music problems were only Silvermoon / Eversong problems
+- Removed the old "mute everything globally and hope it is fine" music path
+- Removed the old documentation assumption that replacement music intentionally used `Master` with `Sound_MusicVolume=0` in steady-state
+
+Current practical debugging rule:
+
+- If a leak is inside supported Midnight Quel'Thalas and `Music muted IDs` looks correct in `/belr status`, the next suspect is usually:
+  - anonymous `mus_1200_*`
+  - non-listfile Blizzard zonemusic
+  - SoundKit-style playback not visible in the Midnight catalog
 
 ## Session Update (2026-03-05)
 

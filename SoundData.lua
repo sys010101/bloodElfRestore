@@ -133,8 +133,9 @@ BElfVR_NewVoiceIDs = {
 -- ============================================================
 --  NEW MUSIC - Midnight 12.0.x Silvermoon / Eversong tracks
 --  These are safe to extend.
---  Add only FileDataIDs that you have verified belong to the new
---  Midnight music set you want muted in this region.
+--  The hand-maintained IDs below act as a seed/fallback set.
+--  If `Midnight_ID_catalog.lua` is loaded, the addon appends the
+--  current wowdev catalog coverage automatically (minus exclusions).
 --
 --  SAFE TO CHANGE:
 --  - You may append new numeric IDs at the end of this list.
@@ -248,17 +249,65 @@ BElfVR_NewMusicIDs = {
     7690545, -- mus_120_lightbloom_f
     7690547, -- mus_120_lightbloom_g
     7690549, -- mus_120_lightbloom_h
-    7698294, -- mus_120_lightbloom_harandar_a
-    7698296, -- mus_120_lightbloom_harandar_b
-    7698298, -- mus_120_lightbloom_harandar_c
-    7698300, -- mus_120_lightbloom_harandar_d
-    7698302, -- mus_120_lightbloom_harandar_e
-    7698304, -- mus_120_lightbloom_harandar_f
-    7698306, -- mus_120_lightbloom_harandar_h
+    -- Keep dedicated Harandar cues native; do not mute them here.
 
     -- Southern corridor leak tracking (Amani Pass / Ruins of Deatholme):
     -- Append only IDs that are verified from focused trace + datamine sessions.
 }
+
+-- Keep a small exclusion list so the generated catalog can provide broad
+-- Midnight coverage without reintroducing native-only Harandar music.
+local MIDNIGHT_CATALOG_MUTE_FAMILY_EXCLUSIONS = {
+    -- Keep Harandar native even if the broader music scope rules evolve again.
+    harandar_1 = true,
+    harandar_2 = true,
+    harandar_3 = true,
+    lightbloom_harandar = true,
+}
+
+local function AppendCatalogMidnightMusicIDs(targetList)
+    if not (targetList and BElfVR_MidnightMusicFamilyIDs) then
+        return
+    end
+
+    local seen = {}
+    for _, id in ipairs(targetList) do
+        seen[id] = true
+    end
+
+    local familyNames = {}
+    for familyName in pairs(BElfVR_MidnightMusicFamilyIDs) do
+        familyNames[#familyNames + 1] = familyName
+    end
+    table.sort(familyNames)
+
+    for _, familyName in ipairs(familyNames) do
+        if not MIDNIGHT_CATALOG_MUTE_FAMILY_EXCLUSIONS[familyName] then
+            for _, id in ipairs(BElfVR_MidnightMusicFamilyIDs[familyName]) do
+                if not seen[id] then
+                    seen[id] = true
+                    targetList[#targetList + 1] = id
+                end
+            end
+        end
+    end
+end
+
+AppendCatalogMidnightMusicIDs(BElfVR_NewMusicIDs)
+
+-- Some supported interiors still use generic Blizzard zonemusic families that
+-- are not part of the Midnight mus_120 catalog. Keep these muted only while
+-- the addon owns music playback inside supported Quel'Thalas regions.
+BElfVR_SupplementalMusicMuteIDs = {}
+
+do
+    -- Generic inn / tavern / rest-area zonemusic families from wowdev listfile:
+    -- tavernalliance, taverndwarf, tavernhorde, tavernhuman, tavernnightelf,
+    -- tavernorcrestarea, tavernpirate, taverntaurenrestarea, tavernundead.
+    for id = 53737, 53778 do
+        BElfVR_SupplementalMusicMuteIDs[#BElfVR_SupplementalMusicMuteIDs + 1] = id
+    end
+end
 
 
 -- ============================================================
@@ -413,13 +462,15 @@ BElfVR_TBCMusicRegions = {
         -- Dedicated Ruins of Deatholme routing: keep this intentionally dark.
         intro = {
             53510, -- GL_Forest3WalkNight01
+            53511, -- GL_Forest3WalkNight02
             53512, -- GL_Forest3WalkNight03
         },
         day = {
-            53499, -- GL_EversongDarkWalkUni01
-            53500, -- GL_EversongDarkWalkUni02
-            53501, -- GL_EversongDarkWalkUni03
-            53502, -- GL_EversongDarkWalkUni04
+            53507, -- GL_Forest2WalkNight01
+            53508, -- GL_Forest2WalkNight02
+            53510, -- GL_Forest3WalkNight01
+            53511, -- GL_Forest3WalkNight02
+            53512, -- GL_Forest3WalkNight03
         },
         night = {
             53507, -- GL_Forest2WalkNight01

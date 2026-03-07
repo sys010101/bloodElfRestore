@@ -1,8 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.6.0-alpha - 2026-03-07
 
-- No changes yet.
+- Tightened music ownership to Midnight Quel'Thalas only by adding scope checks from zone text, subzone text, and parent map lineage.
+- Added native-only music exclusions so areas such as `Harandar` stay on Blizzard music even when their parent zone would otherwise qualify.
+- Fixed Deatholme routing regressions by restoring dedicated `Ruins of Deatholme` routing, adding a narrow `deatholme` token fallback, and re-darkening the TBC `deatholme` pool.
+- Reworked tracked music muting from a partial hand-maintained list into a generated Midnight catalog model based on wowdev/wow-listfile release `202603061837`.
+- Added `Midnight_ID_catalog.lua`, `Midnight_ID_Index.md`, and `tools/generate_midnight_catalog.ps1`.
+- Updated `bloodElfRestore.toc` so the generated Midnight catalog loads before `SoundData.lua`.
+- Added runtime Midnight catalog exclusions for `harandar_1`, `harandar_2`, `harandar_3`, and `lightbloom_harandar` so Harandar remains native.
+- Added `BElfVR_SupplementalMusicMuteIDs` for non-Midnight Blizzard zonemusic used inside supported interiors, currently covering tavern / inn / rest-area IDs `53737`-`53778`.
+- Refactored music mute building so all music muting now flows through the same region-scoped tracked-mute path instead of global login-time muting.
+- Removed the old steady-state `Sound_MusicVolume=0` suppression model from active use and switched replacement music playback to the real `Music` channel.
+- Added persisted restore safety for temporary `Sound_MusicVolume`, `Sound_EnableAmbience`, and `Sound_EnableDialog` changes, including recovery on addon load and `PLAYER_LOGOUT`.
+- Added `Config.lua` as a user-editable policy layer and moved intro cooldown rules there with commented examples.
+- Expanded `Config.lua` into the main safe policy surface for voice behavior, voice classification/scope rules, built-in overrides/profiles, music routing/scope/timing, trace limits, and UI art/layout tuning.
+- Persisted intro cooldown history in `BElfVRDB.musicIntroHistory` so `/reload` no longer resets intro timing.
+- Added layered intro cooldown matching by region, zone, subzone, area (`zone||subzone`), pool, and exact FileDataID, with day/night fallback when an intro is blocked.
+- Expanded music debug and status output with `scope`, `scopeSource`, `overrideSource`, `nativeOnly`, catalog counts, and supplemental mute counts.
+- Updated UI and slash-command wording from tracked Midnight Silvermoon music to tracked supported-zone music where appropriate.
+- Refreshed `README.md`, `DEV_NOTES.md`, and generated Midnight catalog documentation to match the current runtime model and data flow.
+- Added `targetLossByeMaxAgeSeconds` so delayed target-loss bye playback is skipped once the disengage is too old to sound believable.
+- Anchored music-tab action buttons under the live status block so longer status text no longer overlaps the test and utility controls.
+- Fixed post-refactor load regressions by reducing top-level local pressure in `BElfRestore.lua` and cleaning up helper/symbol initialization ordering.
 
 ## 0.5.0-alpha
 
