@@ -232,12 +232,17 @@ BLOOD_ELF_FALLBACK_ZONES = BuildNormalizedStringSet(
 
 BLOOD_ELF_VOICE_SCOPE_TOKENS = BuildNormalizedStringSet(
     GetConfigValue("voice", "scope", "scopeTokens") or {
-        "quelthalas",
         "silvermooncity",
         "eversongwoods",
         "ghostlands",
         "sunstriderisle",
         "sanctumoflight",
+    }
+)
+
+BLOOD_ELF_VOICE_NATIVE_ONLY_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "scope", "nativeOnlyTokens") or {
+        "harandar",
     }
 )
 
@@ -258,6 +263,17 @@ CHILD_NAME_TOKENS = BuildNormalizedStringList(
     GetConfigValue("voice", "classification", "childNameTokens") or {
         "child",
         "orphan",
+    }
+)
+
+BLOOD_ELF_HIDDEN_RACE_NAME_TOKENS = BuildNormalizedStringList(
+    GetConfigValue("voice", "classification", "hiddenRaceNameTokens") or {
+        "silvermoon",
+        "sindorei",
+        "farstrider",
+        "magister",
+        "spellbreaker",
+        "bloodknight",
     }
 )
 
@@ -448,19 +464,27 @@ function NormalizeAreaMatchToken(text)
     return normalized
 end
 
-function AreaHasNativeOnlyMusic(text)
+local function AreaMatchesTokenList(text, tokenList)
     local normalized = NormalizeAreaMatchToken(text)
-    if normalized == "" then
+    if normalized == "" or not tokenList then
         return false
     end
 
-    for _, token in ipairs(BLOOD_ELF_MUSIC_NATIVE_ONLY_TOKENS) do
+    for _, token in ipairs(tokenList) do
         if strfind(normalized, token, 1, true) ~= nil then
             return true
         end
     end
 
     return false
+end
+
+function AreaHasVoiceNativeOnly(text)
+    return AreaMatchesTokenList(text, BLOOD_ELF_VOICE_NATIVE_ONLY_TOKENS)
+end
+
+function AreaHasNativeOnlyMusic(text)
+    return AreaMatchesTokenList(text, BLOOD_ELF_MUSIC_NATIVE_ONLY_TOKENS)
 end
 
 function GetCurrentMapLineageTokens()
@@ -1075,11 +1099,22 @@ local function GetNPCIDFromGUID(guid)
     return npcID
 end
 
-local function IsInBloodElfFallbackArea()
+local function IsInBloodElfVoiceArea()
     local zoneName = GetRealZoneText() or GetZoneText() or ""
     local subZoneName = GetSubZoneText() or ""
     local zoneKey = string.lower(zoneName)
     local subZoneKey = string.lower(subZoneName)
+    local mapTokens = GetCurrentMapLineageTokens()
+
+    if AreaHasVoiceNativeOnly(zoneName) or AreaHasVoiceNativeOnly(subZoneName) then
+        return false, "native-only", zoneName, subZoneName
+    end
+
+    for _, token in ipairs(BLOOD_ELF_VOICE_NATIVE_ONLY_TOKENS) do
+        if mapTokens[token] then
+            return false, "native-only-map", zoneName, subZoneName
+        end
+    end
 
     if BLOOD_ELF_FALLBACK_ZONES[zoneKey] == true then
         return true, "zone", zoneName, subZoneName
@@ -1099,7 +1134,6 @@ local function IsInBloodElfFallbackArea()
         return true, "subzone-token", zoneName, subZoneName
     end
 
-    local mapTokens = GetCurrentMapLineageTokens()
     for token in pairs(mapTokens) do
         if BLOOD_ELF_VOICE_SCOPE_TOKENS[token] then
             return true, "map", zoneName, subZoneName
@@ -1177,25 +1211,47 @@ local function GetUnitTooltipIdentity(unit)
     return info
 end
 
+local function IsUnitDeadForVoice(unit)
+    return UnitExists(unit) and UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit)
+end
+
+local NameLooksLikeBloodElfHiddenRaceFallback
+
 local function IsLikelyBloodElfFallback(unit, allowWithoutGossip)
     if not UnitExists(unit) or UnitIsPlayer(unit) then
+        return false
+    end
+
+    if IsUnitDeadForVoice(unit) then
+        if BElfVRDB and BElfVRDB.verbose then
+            Log("Fallback blocked because target is dead.")
+        end
         return false
     end
 
     local creatureType = UnitCreatureType(unit)
     local sex = UnitSex(unit)
     local canGossip = GossipFrame and GossipFrame:IsShown()
+    local attackable = UnitCanAttack and UnitCanAttack("player", unit)
 
     if BElfVRDB and BElfVRDB.verbose then
         Log("Fallback check: creatureType=" .. tostring(creatureType or "?") ..
             " sex=" .. tostring(sex or "?") ..
-            " gossipShown=" .. tostring(canGossip))
+            " gossipShown=" .. tostring(canGossip) ..
+            " attackable=" .. tostring(attackable))
     end
 
-    local zoneAllowed, scopeSource, zoneName, subZoneName = IsInBloodElfFallbackArea()
+    if attackable then
+        if BElfVRDB and BElfVRDB.verbose then
+            Log("Fallback blocked because target is hostile/attackable.")
+        end
+        return false
+    end
+
+    local zoneAllowed, scopeSource, zoneName, subZoneName = IsInBloodElfVoiceArea()
     if not zoneAllowed then
         if BElfVRDB and BElfVRDB.verbose then
-            Log("Fallback blocked outside Blood Elf zones: zone=" ..
+            Log("Fallback blocked outside supported Blood Elf voice scope (" .. tostring(scopeSource) .. "): zone=" ..
                 tostring(zoneName ~= "" and string.lower(zoneName) or "?") ..
                 " subzone=" .. tostring(subZoneName ~= "" and string.lower(subZoneName) or "?"))
         end
@@ -1206,8 +1262,21 @@ local function IsLikelyBloodElfFallback(unit, allowWithoutGossip)
         Log("Fallback zone scope accepted via " .. tostring(scopeSource))
     end
 
-    if creatureType == "Humanoid" and (sex == 2 or sex == 3) and (canGossip or allowWithoutGossip) then
-        return true
+    if creatureType == "Humanoid" and (sex == 2 or sex == 3) then
+        if canGossip then
+            return true
+        end
+
+        if allowWithoutGossip and NameLooksLikeBloodElfHiddenRaceFallback(unit) then
+            if BElfVRDB and BElfVRDB.verbose then
+                Log("Fallback accepted before gossip because target name/profile matches Blood Elf hints.")
+            end
+            return true
+        end
+    end
+
+    if BElfVRDB and BElfVRDB.verbose and allowWithoutGossip and not canGossip then
+        Log("Fallback blocked before gossip because target name/profile lacks Blood Elf hints.")
     end
 
     return false
@@ -2120,6 +2189,24 @@ local function GetUnitVORangeTier(unit)
     return nil
 end
 
+local function CanPlayTargetSelectGreeting(unit)
+    if not UnitExists(unit) then
+        return false
+    end
+
+    if IsUnitDeadForVoice(unit) then
+        Log("Skipping target-select greet because target is dead.")
+        return false
+    end
+
+    if UnitCanAttack and UnitCanAttack("player", unit) then
+        Log("Skipping target-select greet because target is hostile/attackable.")
+        return false
+    end
+
+    return true
+end
+
 local function ShouldPlayForRangeTier(rangeTier)
     if rangeTier == "close" then
         return true
@@ -2228,6 +2315,26 @@ local function NameLooksLikeChildNPC(unit)
 
     for _, token in ipairs(CHILD_NAME_TOKENS) do
         if strfind(name, token, 1, true) ~= nil then
+            return true
+        end
+    end
+
+    return false
+end
+
+NameLooksLikeBloodElfHiddenRaceFallback = function(unit)
+    local nameKey = NormalizeUserConfigKey(UnitName(unit))
+    if nameKey == "" then
+        return false
+    end
+
+    local profile = GetDefaultNameProfile(unit)
+    if profile and not profile.exclude then
+        return true
+    end
+
+    for _, token in ipairs(BLOOD_ELF_HIDDEN_RACE_NAME_TOKENS) do
+        if strfind(nameKey, token, 1, true) ~= nil then
             return true
         end
     end
@@ -2487,6 +2594,19 @@ local function GetBloodElfNPCGender(unit, allowHiddenRaceFallbackWithoutGossip)
     -- We only want NPCs, not player characters
     if UnitIsPlayer(unit) then return nil end
 
+    if IsUnitDeadForVoice(unit) then
+        Log("Target is dead; keeping native voice: " .. tostring(UnitName(unit)))
+        return nil
+    end
+
+    local zoneAllowed, scopeSource, zoneName, subZoneName = IsInBloodElfVoiceArea()
+    if not zoneAllowed then
+        Log("Skipping TBC voice outside supported areas (" .. tostring(scopeSource) .. "): zone=" ..
+            tostring(zoneName ~= "" and string.lower(zoneName) or "?") ..
+            " subzone=" .. tostring(subZoneName ~= "" and string.lower(subZoneName) or "?"))
+        return nil
+    end
+
     if IsExcludedByNameProfile(unit) then
         Log("Target is excluded by built-in name profile: " .. tostring(UnitName(unit)))
         return nil
@@ -2524,6 +2644,10 @@ local function GetBloodElfNPCGender(unit, allowHiddenRaceFallbackWithoutGossip)
     end
 
     local tooltipIdentity = GetUnitTooltipIdentity(unit)
+
+    if BElfVRDB and BElfVRDB.verbose then
+        Log("Voice scope accepted via " .. tostring(scopeSource))
+    end
 
     if tooltipIdentity.hasChildMarker then
         Log("Target looks like a child NPC; keeping native voice: " .. tostring(UnitName(unit)))
@@ -2826,15 +2950,30 @@ local function BeginStartupMusicChannelPurge(reason)
 
     C_Timer.After(MUSIC_STARTUP_PURGE_DELAY_SECONDS, function()
         local restoreValue = GetPendingCVarRestore("Sound_EnableMusic") or currentMusicEnabled
+        local resumedReason = state.musicStartupPurgeReason or "startup purge"
+        local resumeContext = GetMusicContext()
+        local shouldMuteTrackedMusic = resumeContext.supported and IsMusicReplacementActive()
+
+        SetTrackedMusicMutesActive(shouldMuteTrackedMusic, resumeContext.regionKey, resumedReason .. " pre-enable")
+
+        if StopMusic then
+            StopMusic()
+            state.musicLastNativeStopAt = GetTime()
+        end
+
         if GetCVar("Sound_EnableMusic") ~= tostring(restoreValue) then
             state.musicStartupPurgeIgnoreNextCVar = true
             SetCVar("Sound_EnableMusic", tostring(restoreValue))
+
+            if StopMusic then
+                StopMusic()
+                state.musicLastNativeStopAt = GetTime()
+            end
         end
 
         ClearPendingCVarRestore("Sound_EnableMusic")
         state.musicStartupPurgeInProgress = false
 
-        local resumedReason = state.musicStartupPurgeReason or "startup purge"
         state.musicStartupPurgeReason = nil
 
         EvaluateMusicState(resumedReason .. " resume", true)
@@ -3476,6 +3615,10 @@ local function OnTargetChanged()
         return
     end
 
+    if not CanPlayTargetSelectGreeting("target") then
+        return
+    end
+
     local rangeTier = GetUnitVORangeTier("target")
     if not rangeTier then
         Log("Skipping target-select greet because target is out of VO range.")
@@ -3492,6 +3635,8 @@ local function OnTargetChanged()
         return
     end
 
+    -- Hidden-race fallback on target-select is restricted to positive
+    -- Blood Elf name/profile hints, not generic humanoids.
     local gender = GetBloodElfNPCGender("target", true)
     if not gender then
         return

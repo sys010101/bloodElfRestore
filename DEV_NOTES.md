@@ -3,7 +3,7 @@
 ## Current Purpose
 
 Current working version:
-- `0.6.0-alpha`
+- `0.6.1-alpha`
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Quel'Thalas while muting the newer Midnight replacement voice set.
 
@@ -108,7 +108,7 @@ Original issue:
 Fixes added:
 - Hidden tooltip scan for `"Blood Elf"` text
 - Humanoid fallback classifier when race text is hidden
-- Left-click target selection can use the hidden-race humanoid fallback before gossip opens
+- Hidden-race humanoid fallback on target selection is limited to positive Blood Elf name/profile hints instead of generic humanoids
 - The hidden-race humanoid fallback is now limited to Blood Elf zones so unrelated humanoids elsewhere do not get Blood Elf VO
 - Built-in name profile fallback for repeated NPC names that hide useful metadata
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1-alpha - 2026-03-08
+
+- Applied voice-area gating to all TBC replacement playback so out-of-scope NPCs no longer inherit Blood Elf voices just because their tooltip exposes Blood Elf race text.
+- Added voice-side native-only exclusions so areas such as `Harandar` stay on Blizzard voice just like they already do on the music side.
+- Narrowed hidden-race target-select fallback from generic humanoids to positive Blood Elf name/profile hints, preventing false positives on unrelated nearby humanoids.
+- Blocked target-select TBC playback for dead and hostile or attackable units.
+- Restored hidden-race target-select recognition for `Doomsayer` and `Household Attendant` via exact built-in Blood Elf name profiles.
+- Fixed the Lua reload crash caused by a forward-referenced hidden-race fallback helper.
+- Tightened startup music purge ordering so tracked music mutes are armed before music is re-enabled, reducing Silvermoon intro overlap on login and `/reload`.
+- Reworked the README testing guidance around exploratory issue-tracker-driven testing and trimmed the README limitations list to durable user-facing constraints.
+
 ## 0.6.0-alpha - 2026-03-07
 
 - Tightened music ownership to Midnight Quel'Thalas only by adding scope checks from zone text, subzone text, and parent map lineage.
@@ -120,12 +131,4 @@
 - Added a built-in exclusion profile for `Mahra Treebender` to avoid hidden-race fallback false positives.
 - Added NPC names to key verbose trigger logs for easier troubleshooting.
 - Restricted the hidden-race humanoid fallback to Blood Elf zones to prevent false positives like Zul'Aman trolls.
-
-## Notes For Next Iteration
-
-- Expand the Silvermoon music allow-list using trace recordings from more interiors and subzones.
-- Validate whether additional Midnight music FileDataIDs still need muting.
-- Consider exposing music timing values in the UI once the zone map stabilizes.
-- Consider one-time migration cleanup for legacy saved variables instead of clearing them every load.
-- Replace placeholder TOC metadata before any public release.
 

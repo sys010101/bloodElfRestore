@@ -75,12 +75,12 @@ BElfVR_Config = {
 
         -- ========================================================
         --  Voice Scope
-        --  Keeps hidden-race humanoid fallback inside Midnight
-        --  Quel'Thalas instead of letting it bleed worldwide.
+        --  Keeps TBC voice replacement inside supported Quel'Thalas
+        --  areas instead of letting it bleed into unrelated regions.
         -- ========================================================
         scope = {
-            -- Exact lowercase zone or subzone text accepted for voice
-            -- fallback when Blizzard hides race data.
+            -- Exact lowercase zone or subzone text accepted for TBC
+            -- voice replacement.
             fallbackZones = {
                 "silvermoon city",
                 "eversong woods",
@@ -90,15 +90,21 @@ BElfVR_Config = {
                 "the bazaar",
             },
 
-            -- Normalized map/area tokens accepted for voice fallback.
-            -- These use alphanumeric-only normalized text from area names.
+            -- Normalized map/area tokens accepted for TBC voice
+            -- replacement. These use alphanumeric-only normalized text
+            -- from area names.
             scopeTokens = {
-                "quelthalas",
                 "silvermooncity",
                 "eversongwoods",
                 "ghostlands",
                 "sunstriderisle",
                 "sanctumoflight",
+            },
+
+            -- Areas that must always keep Blizzard's native voices even
+            -- if a parent zone or map token would otherwise qualify.
+            nativeOnlyTokens = {
+                "harandar",
             },
         },
 
@@ -125,6 +131,18 @@ BElfVR_Config = {
             childNameTokens = {
                 "child",
                 "orphan",
+            },
+
+            -- Hidden-race fallback on plain target selection is limited
+            -- to names that strongly suggest a Blood Elf NPC. These are
+            -- normalized to lowercase alphanumeric tokens at runtime.
+            hiddenRaceNameTokens = {
+                "silvermoon",
+                "sindorei",
+                "farstrider",
+                "magister",
+                "spellbreaker",
+                "blood knight",
             },
 
             -- If tooltip race text explicitly contains one of these,
@@ -219,6 +237,12 @@ BElfVR_Config = {
                     exclude = true,
                 },
                 ["silvermoon resident"] = {
+                    role = "standard",
+                },
+                ["doomsayer"] = {
+                    role = "standard",
+                },
+                ["household attendant"] = {
                     role = "standard",
                 },
 

@@ -1,6 +1,6 @@
 # Blood Elf Restore
 
-Version: `0.6.0-alpha`
+Version: `0.6.1-alpha`
 
 ## Disclaimer
 
@@ -36,6 +36,7 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - Addon loads correctly as `bloodElfRestore`
 - Midnight Blood Elf voice muting can be enabled, disabled, and re-applied
 - Left-click greet playback works on recognized nearby targets
+- Hidden-race target-select fallback now works only for positive Blood Elf name/profile hints, so generic humanoids no longer get guessed into TBC VO
 - Right-click gossip greet playback works
 - Gossip close bye playback works
 - Target-loss bye playback works after a short post-greet delay and is skipped if the disengage happens too late to sound believable
@@ -47,6 +48,7 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - Far-distance left-click targeting uses fake distance falloff buckets instead of always playing
 - If WoW sound output is disabled (including the usual sound-effects toggle such as `Ctrl+S`), the addon does not inject replacement voices
 - Verbose logging now includes the NPC name in key trigger lines to make troubleshooting easier
+- Voice replacement is now scoped to supported Quel'Thalas areas, with native-only exclusions such as `Harandar`
 - Music replacement is now scoped to Midnight Quel'Thalas map lineage instead of broad zone text alone
 - Music logic currently recognizes:
   - `Silvermoon City`
@@ -89,7 +91,7 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - Fake distance falloff is behavioral only: sounds play less often at range, but not quieter
 - Some Midnight NPCs still require manual overrides because Blizzard hides or misreports metadata
 - Some NPCs still need explicit built-in profile exceptions (for example vendor-only or excluded non-Blood Elf false positives)
-- The hidden-race humanoid fallback is intentionally constrained to Blood Elf zones so unrelated humanoids elsewhere do not get Blood Elf VO
+- Hidden-race target-select fallback before gossip is intentionally conservative: it only accepts supported-area NPCs with positive Blood Elf name/profile hints
 - Mute coverage depends on the generated Midnight catalog plus the manual and supplemental FileDataIDs listed in `SoundData.lua`
 - If Blizzard adds or swaps new Blood Elf VO assets, more mute IDs may be needed
 - Music replacement is an addon-side approximation, not a true engine-level override of Blizzard's internal zone music resolver
@@ -126,7 +128,7 @@ The music system uses a similar approximation model:
 7. Stop, fade, and re-evaluate the injected music when the context changes.
 8. Restore any temporary audio-setting backups when the addon leaves music control or the client reloads.
 
-In `0.6.0-alpha`, the music layer also:
+The current music layer also:
 
 - uses region-specific pools for broader Eversong, Sunstrider Isle, southern Eversong remastered areas, a dedicated Deatholme pocket, and Amani routing
 - loads a generated Midnight music catalog from wowdev/wow-listfile release `202603061837`
@@ -316,15 +318,14 @@ Music test playback:
 
 `Re-apply Mutes` also re-enables the mute option if it was previously turned off.
 
-## Known Issues
+## Current Limitations
+
+New bugs and regressions should be tracked in the repo issue tracker rather than maintained here as a running checklist.
 
 - `Sound_EnableDialog` is briefly toggled during injected playback. This is intentional as a workaround, but it is a global client setting and not a per-NPC audio control.
-- Native dialog suppression is now optional and can be disabled for compatibility testing.
-- `Suppress` is the main fallback for stubborn NPCs that still leak a native Midnight line alongside the addon's replacement voice.
 - `UnitSex` appears inverted for current Midnight Blood Elf NPCs, so the addon treats it as reversed by default.
 - Role classification still uses name heuristics for many NPCs.
 - The role-pool slicing logic depends on the exact list order in `SoundData.lua`.
-- Legacy `genderOverrides` and `roleOverrides` are migrated once into a backup field, then reset in favor of GUID-based overrides.
 - Music replacement now uses the `Music` channel, so setting WoW's music slider to `0` will silence both native and injected music by design.
 - The generated Midnight catalog covers `mus_120_*` families, but manual follow-up may still be needed for anonymous `mus_1200_*` IDs or non-listfile SoundKit playback.
 - The music trace recorder does not create a standalone text file. It writes into SavedVariables, which WoW flushes to disk on `/reload` or logout.
@@ -346,17 +347,12 @@ This project is released under the MIT License. See [LICENSE](C:\Program Files (
 7. Capture additional anonymous `mus_1200_*` or non-listfile native music leaks if Blizzard introduces them.
 8. Replace placeholder TOC metadata such as author information with final release metadata.
 
-## Recommended Testing Pass
+## Exploratory Testing
 
-1. Test left-click greet on nearby, mid-range, and far-range targets.
-2. Test right-click greet and gossip close bye.
-3. Test target-loss bye after a short delay and confirm it does not fire if you keep the NPC selected, move far away, and only then drop target.
-4. Test male and female NPCs after `/reload`.
-5. Test `/belr force ...` and `/belr force-name ...` on known problematic NPCs.
-6. Test with verbose logging enabled when adding new mute IDs or overrides.
-7. Test `/belr music verbose on` while walking between Silvermoon subzones and interiors, including at least one inn such as `Wayfarer's Rest`.
-8. Test `Ruins of Deatholme`, `Harandar`, and one unrelated world zone after `/reload` to confirm scope, native-only exclusions, and Deatholme routing.
-9. Test the in-game music slider before and after `/reload` while standing in a supported music zone.
-10. Test `/belr music trace on`, run southern Eversong routes, then `/reload`, and inspect the SavedVariables trace for unexpected zone names, missing allow-list entries, or unsupported native-only pockets.
-11. During fast flying passes, use `/belr music note <text>` at the exact moment you hear a leak so the trace has a searchable marker.
+This addon benefits more from free exploratory testing than from a rigid scripted pass.
+
+1. Use it normally across supported and unsupported areas, including reloads, relogs, flight paths, fast movement, and abrupt target swaps.
+2. Try destructive or awkward interaction patterns on purpose: rapid left-click retargeting, repeated gossip open and close, moving out of range mid-line, and toggling settings while audio is active.
+3. If something sounds wrong, file it in the repo issue tracker with the NPC name, zone or subzone, what you expected, what actually happened, and any useful `/belr verbose` or `/belr music trace` output.
+4. Use the in-game debug commands when needed, but as investigation tools, not as a required checklist for every tester.
 
