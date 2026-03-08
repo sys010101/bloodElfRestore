@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3-alpha - 2026-03-08
+
+- Fixed supported-region music transitions that could keep the previous injected TBC region track playing until its natural end instead of handing off immediately to the new region.
+- Split active injected-track ownership from current player-area tracking so music swaps now trigger when playback state and live region context diverge.
+- Hardened GUID parsing and debug formatting so protected or non-creature gossip targets no longer throw secret-string / taint errors when the addon inspects or logs them.
+- Updated `README.md`, `DEV_NOTES.md`, and release metadata for `0.6.3-alpha`.
+
 ## 0.6.2-alpha - 2026-03-08
 
 - Added explicit world-entry music settle handling for supported loading-screen arrivals, including `ZONE_CHANGED_NEW_AREA` arming, intro suppression on world entry, and repeated native `StopMusic()` guard pulses before replacement playback is allowed to start.

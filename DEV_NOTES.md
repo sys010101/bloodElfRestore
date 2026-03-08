@@ -3,7 +3,7 @@
 ## Current Purpose
 
 Current working version:
-- `0.6.2-alpha`
+- `0.6.3-alpha`
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Quel'Thalas while muting the newer Midnight replacement voice set.
 
@@ -242,6 +242,7 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
 - The music shuffle system keeps recently played TBC tracks on a cooldown so the same track does not immediately repeat
 - Playback routing now keys off a stable region + day/night signature instead of tiny subzone churn, which greatly reduces constant restarts while moving around Silvermoon
 - Loading-screen arrivals into supported music space now arm a short world-entry settle window before addon playback is allowed to start
+- Active injected-music ownership is now tracked separately from the player's current area context, so supported-region swaps can force an immediate handoff instead of waiting for the stale track to finish
 - Injected replacement music currently plays on `Master`, not `Music`, so the addon can hard-suppress Blizzard's native music channel without cutting its own replacement track
 - The steady-state `Sound_MusicVolume=0` suppression path was reinstated for supported replacement ownership after some Silvermoon load-screen arrivals kept native Midnight music alive through tracked muting and repeated `StopMusic()` guards
 - Temporary audio-setting backups are persisted in `BElfVRDB.pendingCVarRestores` and restored on area exit, addon load, `/reload`, and `PLAYER_LOGOUT`
@@ -253,6 +254,7 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - scope source
   - override source
   - native-only state
+- GUID parsing and debug logging now fail closed on protected or nonstandard gossip-object GUID values instead of assuming every interactable target is a normal creature GUID
 - `/belr music stop` now creates a real manual stop state and stays idle until a meaningful resume trigger occurs
 - Slash music test commands now use the same region-aware pool selection as the live music system
 - `/belr status` now reports:
@@ -418,6 +420,28 @@ In `BElfRestore.lua`:
 4. Consider deprecating the old `genderOverrides` / `roleOverrides` saved-variable fields entirely in a cleanup pass
 5. Expand the Midnight Quel'Thalas scope tokens, native-only tokens, and subzone allow-lists from recorded trace sessions
 6. Use recorded trace sessions to identify additional anonymous `mus_1200_*` or non-listfile music playback that still leaks through
+
+## Session Update (2026-03-08 - Region Handoff and Protected GUID Hardening)
+
+This follow-up came after the Silvermoon world-entry overlap fix, when two more regressions showed up during live retesting:
+
+- moving between supported Quel'Thalas music regions could keep the old injected TBC track playing until its natural end instead of handing off immediately
+- interacting with a non-NPC dungeon gossip object (`Light-Starved Blossom`) triggered a taint/secret-string error path while the addon tried to parse and log the target GUID like a normal creature
+
+What changed:
+
+- Split music state into two responsibilities:
+  - current player context (`musicCurrentAreaKey`, `musicCurrentRegionKey`)
+  - currently playing injected track ownership (`musicPlaybackAreaKey`, `musicPlaybackRegionKey`)
+- Supported-region swaps now compare the active injected track's ownership against the live player context and force an immediate music handoff when they diverge
+- Added explicit verbose tracing for playback/context mismatch swaps so future region-handoff bugs are easier to spot in `music verbose`
+- Hardened `GetNPCIDFromGUID()` with protected-call parsing so nonstandard or protected GUID values fail closed instead of exploding on `strsplit`
+- Added guarded debug-string formatting so logging protected GUID-like values no longer taints or crashes gossip/object interactions
+
+Practical outcome:
+
+- traveling from `Silvermoon City` to `Sunstrider Isle` and similar supported-region swaps now changes TBC music immediately
+- gossip objects and non-creature interactables no longer crash the addon just because `UnitGUID()` returned a protected or non-creature value
 
 ## Session Update (2026-03-08 - Silvermoon World-Entry Music Overlap Fix)
 

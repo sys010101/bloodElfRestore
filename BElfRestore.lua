@@ -851,6 +851,8 @@ local state = {
     musicCurrentPool = nil,
     musicCurrentAreaKey = nil,
     musicCurrentRegionKey = nil,
+    musicPlaybackAreaKey = nil,
+    musicPlaybackRegionKey = nil,
     musicLastTrackStartedAt = 0,
     musicExpectedEndTime = 0,
     musicLastGlobalMusicEnabled = nil,
@@ -1095,12 +1097,28 @@ end
 local function GetNPCIDFromGUID(guid)
     if not guid then return nil end
 
-    local unitType, _, _, _, _, npcID = strsplit("-", guid)
+    local ok, unitType, _, _, _, _, npcID = pcall(strsplit, "-", guid)
+    if not ok then
+        return nil
+    end
     if unitType ~= "Creature" and unitType ~= "Vehicle" then
         return nil
     end
 
     return npcID
+end
+
+local function FormatDebugValue(value, fallbackText)
+    if value == nil then
+        return fallbackText or "?"
+    end
+
+    local ok, text = pcall(tostring, value)
+    if not ok then
+        return fallbackText or "<protected>"
+    end
+
+    return text
 end
 
 local function IsInBloodElfVoiceArea()
@@ -1580,6 +1598,8 @@ local function StopInjectedMusic(fadeOutMS)
     end
     state.musicCurrentTrackID = nil
     state.musicCurrentPool = nil
+    state.musicPlaybackAreaKey = nil
+    state.musicPlaybackRegionKey = nil
     state.musicLastTrackStartedAt = 0
     state.musicExpectedEndTime = 0
 end
@@ -1760,6 +1780,8 @@ local function ResetMusicState(stopPlayback)
 
     state.musicCurrentAreaKey = nil
     state.musicCurrentRegionKey = nil
+    state.musicPlaybackAreaKey = nil
+    state.musicPlaybackRegionKey = nil
     state.musicLastContextSignature = nil
     state.musicLastZoneName = nil
     state.musicLastSubZoneName = nil
@@ -1795,6 +1817,8 @@ local function ShutdownMusicState(reason)
     SetTrackedMusicMutesActive(false, nil, tostring(reason or "shutdown"))
     state.musicCurrentAreaKey = nil
     state.musicCurrentRegionKey = nil
+    state.musicPlaybackAreaKey = nil
+    state.musicPlaybackRegionKey = nil
     state.musicLastContextSignature = nil
     state.musicLastZoneName = nil
     state.musicLastSubZoneName = nil
@@ -1919,7 +1943,7 @@ local function ChooseMusicTrack(poolName, tracks)
     return chosen
 end
 
-local function PlayMusicTrack(fileDataID, poolName, reason)
+local function PlayMusicTrack(fileDataID, poolName, reason, playbackAreaKey, playbackRegionKey)
     if not fileDataID then
         return false
     end
@@ -1943,6 +1967,8 @@ local function PlayMusicTrack(fileDataID, poolName, reason)
     state.musicHandle = soundHandle
     state.musicCurrentTrackID = fileDataID
     state.musicCurrentPool = poolName
+    state.musicPlaybackAreaKey = playbackAreaKey
+    state.musicPlaybackRegionKey = playbackRegionKey
     state.musicLastTrackStartedAt = GetTime()
     state.musicExpectedEndTime = state.musicLastTrackStartedAt + ((BElfVR_TBCMusicDurations and BElfVR_TBCMusicDurations[fileDataID]) or MUSIC_TRACK_ROTATE_SECONDS)
     state.musicTrackCooldowns[fileDataID] = state.musicLastTrackStartedAt
@@ -2068,6 +2094,8 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         or (not state.musicCurrentAreaKey)
     local areaChanged = state.musicCurrentAreaKey ~= context.areaKey
     local regionChanged = state.musicCurrentRegionKey ~= context.regionKey
+    local playbackAreaChanged = state.musicPlaybackAreaKey ~= nil and state.musicPlaybackAreaKey ~= context.areaKey
+    local playbackRegionChanged = state.musicPlaybackRegionKey ~= nil and state.musicPlaybackRegionKey ~= context.regionKey
     -- Fallback-only rotation:
     -- If a track has a known duration, let it finish naturally.
     -- The old fixed timer caused long songs (especially intros) to be
@@ -2081,7 +2109,17 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         enteringSupportedZone or
         areaChanged or
         regionChanged or
+        playbackAreaChanged or
+        playbackRegionChanged or
         locationChanged
+
+    if (playbackAreaChanged or playbackRegionChanged) and (BElfVRDB and BElfVRDB.musicVerbose) then
+        LogMusic("Current injected track no longer matches active music context; forcing an immediate region swap.")
+        RecordMusicTrace("Playback/context mismatch forcing swap from=" ..
+            tostring(state.musicPlaybackRegionKey or "<none>") ..
+            " to=" .. tostring(context.regionKey or "<none>"))
+    end
+
     if shouldForceNativeGuard then
         EnforceNativeMusicSuppression(reason or "update", true)
     elseif not MUSIC_SUPPRESS_NATIVE_WITH_VOLUME then
@@ -2113,7 +2151,7 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
     end
 
     if state.musicManualStop then
-        if forceTrackRefresh or globalMusicToggleChanged or areaChanged then
+        if forceTrackRefresh or globalMusicToggleChanged or areaChanged or playbackAreaChanged or playbackRegionChanged then
             state.musicManualStop = false
         else
             state.musicCurrentAreaKey = context.areaKey
@@ -2123,7 +2161,13 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         end
     end
 
-    if not (forceTrackRefresh or globalMusicToggleChanged or areaChanged or timeToRotate or not state.musicHandle) then
+    if not (forceTrackRefresh or
+        globalMusicToggleChanged or
+        areaChanged or
+        playbackAreaChanged or
+        playbackRegionChanged or
+        timeToRotate or
+        not state.musicHandle) then
         state.musicLastContextSignature = contextSignature
         return
     end
@@ -2157,7 +2201,8 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         elseif resolvedRegionKey then
             resolvedPoolName = tostring(resolvedRegionKey) .. ":" .. poolName
         end
-        local didPlay = PlayMusicTrack(nextTrack, resolvedPoolName, reason or (areaChanged and "area change" or "rotation"))
+        local refreshReason = reason or ((areaChanged or playbackAreaChanged or playbackRegionChanged) and "area change" or "rotation")
+        local didPlay = PlayMusicTrack(nextTrack, resolvedPoolName, refreshReason, context.areaKey, context.regionKey)
         if didPlay and poolName == "intro" then
             RememberMusicIntroPlayback(context, resolvedRegionKey, poolName, nextTrack)
         end
@@ -2167,7 +2212,7 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
             local fallbackTrack = ChooseMusicTrack(fallbackPoolName, fallbackPool)
             if fallbackTrack then
                 local fallbackResolvedPoolName = tostring(fallbackRegionKey or MUSIC_REGION_EVERSONG_SOUTH) .. ":" .. fallbackPoolName
-                PlayMusicTrack(fallbackTrack, fallbackResolvedPoolName, "amani fallback after failed troll track")
+                PlayMusicTrack(fallbackTrack, fallbackResolvedPoolName, "amani fallback after failed troll track", context.areaKey, context.regionKey)
             end
         end
     else
@@ -2544,7 +2589,7 @@ local function GetVoiceRole(unit)
     local guid = UnitGUID(unit)
     local guidOverride = GetConfiguredGUIDRoleOverride(guid)
     if guidOverride then
-        Log("Using configured role override for guid=" .. tostring(guid) .. ": " .. guidOverride)
+        Log("Using configured role override for guid=" .. FormatDebugValue(guid, "<protected-guid>") .. ": " .. guidOverride)
         return guidOverride
     end
 
@@ -2684,7 +2729,7 @@ local function GetBloodElfNPCGender(unit, allowHiddenRaceFallbackWithoutGossip)
     local guid = UnitGUID(unit)
     local guidOverride = GetConfiguredGUIDGenderOverride(guid)
     if guidOverride then
-        Log("Using configured gender override for guid=" .. tostring(guid) .. ": " .. guidOverride)
+        Log("Using configured gender override for guid=" .. FormatDebugValue(guid, "<protected-guid>") .. ": " .. guidOverride)
         return guidOverride
     end
 
@@ -3068,10 +3113,10 @@ local function SetCurrentTargetGenderOverride(value)
 
     if value == "male" or value == "female" then
         BElfVRDB.guidGenderOverrides[guid] = value
-        print("|cffFFD700[BElfVR]|r guid=" .. guid .. " forced to |cffFFFFFF" .. value .. "|r voices.")
+        print("|cffFFD700[BElfVR]|r guid=" .. FormatDebugValue(guid, "<protected-guid>") .. " forced to |cffFFFFFF" .. value .. "|r voices.")
     else
         BElfVRDB.guidGenderOverrides[guid] = nil
-        print("|cffFFD700[BElfVR]|r Cleared gender override for guid=" .. guid .. ".")
+        print("|cffFFD700[BElfVR]|r Cleared gender override for guid=" .. FormatDebugValue(guid, "<protected-guid>") .. ".")
     end
 
     RefreshUI()
@@ -3088,10 +3133,10 @@ local function SetCurrentTargetRoleOverride(value)
 
     if value == "military" or value == "noble" or value == "standard" then
         BElfVRDB.guidRoleOverrides[guid] = value
-        print("|cffFFD700[BElfVR]|r guid=" .. guid .. " forced to |cffFFFFFF" .. value .. "|r role voices.")
+        print("|cffFFD700[BElfVR]|r guid=" .. FormatDebugValue(guid, "<protected-guid>") .. " forced to |cffFFFFFF" .. value .. "|r role voices.")
     else
         BElfVRDB.guidRoleOverrides[guid] = nil
-        print("|cffFFD700[BElfVR]|r Cleared role override for guid=" .. guid .. ".")
+        print("|cffFFD700[BElfVR]|r Cleared role override for guid=" .. FormatDebugValue(guid, "<protected-guid>") .. ".")
     end
 
     RefreshUI()
@@ -3588,7 +3633,7 @@ local function OnGossipShow()
     Log("GOSSIP_SHOW target=" .. targetName ..
         " npc=" .. tostring(npcID or "?") ..
         " sex=" .. tostring(sex or "?") ..
-        " guid=" .. tostring(guid or "?"))
+        " guid=" .. FormatDebugValue(guid, "<protected-guid>"))
 
     local gender = GetBloodElfNPCGender("target")
     if not gender then

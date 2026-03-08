@@ -1,6 +1,6 @@
 # Blood Elf Restore
 
-Version: `0.6.2-alpha`
+Version: `0.6.3-alpha`
 
 ## Disclaimer
 
@@ -74,8 +74,10 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - Supported interiors can now mute both Midnight `mus_120_*` music and Blizzard generic tavern / inn zonemusic to prevent overlap in places like `Wayfarer's Rest`
 - The generated Midnight catalog is loaded at runtime and currently provides the main music mute coverage, with Harandar families intentionally excluded
 - Replacement music now uses `Master` while supported replacement ownership temporarily forces native `Sound_MusicVolume=0`, which is the current reliable fix for Silvermoon load-screen overlap
+- Moving between supported music regions now forces an immediate TBC music handoff instead of waiting for the old injected region track to finish naturally
 - Temporary CVar backups for music volume, ambience, and dialog are restored on area exit, `/reload`, and logout
 - Ctrl+M and global sound-toggle changes now trigger immediate music re-evaluation (`CVAR_UPDATE`) without waiting for periodic ticks
+- Non-NPC gossip objects with protected or nonstandard GUID values now fail closed instead of crashing the addon while it tries to inspect or log them
 - The settings UI is now split into separate `Voice` and `Music` tabs
 - Music-tab action buttons now anchor below the live status block so longer status text does not overlap the controls
 - Music can optionally play an intro cue on fresh entry, then rotate through day or night pools
@@ -125,7 +127,7 @@ The music system uses a similar approximation model:
 4. Watch zone, subzone, resting, and day/night changes.
 5. Choose an intro/day/night TBC music track.
 6. Avoid immediate repeats with a per-track cooldown.
-7. Stop, fade, and re-evaluate the injected music when the context changes.
+7. Stop, fade, and re-evaluate the injected music when the context changes, including immediate supported-region handoff when the active injected track no longer matches the player's current region.
 8. Restore any temporary audio-setting backups when the addon leaves music control or the client reloads.
 
 The current music layer also:
