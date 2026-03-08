@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.2-alpha - 2026-03-08
+
+- Added explicit world-entry music settle handling for supported loading-screen arrivals, including `ZONE_CHANGED_NEW_AREA` arming, intro suppression on world entry, and repeated native `StopMusic()` guard pulses before replacement playback is allowed to start.
+- Restored replacement music playback to `Master` and re-enabled supported-zone `Sound_MusicVolume=0` suppression after some Silvermoon native tracks kept surviving tracked muting and `StopMusic()` guards on reload, hearth, and teleport arrivals.
+- Fixed persistent Silvermoon double-music overlap on loading-screen arrivals where Midnight city or inn music could continue underneath injected TBC playback.
+- Updated `README.md` and `DEV_NOTES.md` so the documented music model matches the current runtime again.
+
 ## 0.6.1-alpha - 2026-03-08
 
 - Applied voice-area gating to all TBC replacement playback so out-of-scope NPCs no longer inherit Blood Elf voices just because their tooltip exposes Blood Elf race text.

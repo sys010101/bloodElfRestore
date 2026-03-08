@@ -341,6 +341,7 @@ MUSIC_END_GRACE_SECONDS = GetConfigNumber(0.5, "music", "timing", "endGraceSecon
 MUSIC_DAY_START_HOUR = GetConfigInteger(6, "music", "dayNightHours", "dayStartHour")
 MUSIC_NIGHT_START_HOUR = GetConfigInteger(18, "music", "dayNightHours", "nightStartHour")
 MUSIC_STARTUP_PURGE_DELAY_SECONDS = GetConfigNumber(0.35, "music", "playback", "startupPurgeDelaySeconds")
+MUSIC_WORLD_ENTRY_SETTLE_SECONDS = GetConfigNumber(0.85, "music", "playback", "worldEntrySettleSeconds")
 MUSIC_TRACE_MAX_ENTRIES = GetConfigInteger(1200, "music", "debug", "traceMaxEntries")
 
 BLOOD_ELF_MUSIC_ZONES = BuildNormalizedStringSet(
@@ -876,6 +877,9 @@ local state = {
     musicStartupPurgeInProgress = false,
     musicStartupPurgeIgnoreNextCVar = false,
     musicStartupPurgeReason = nil,
+    musicPendingWorldEntry = false,
+    musicSkipIntroOnWorldEntry = false,
+    musicWorldEntrySuppressUntil = 0,
 }
 
 local ui = {
@@ -1724,6 +1728,31 @@ local function EnforceNativeMusicSuppression(reason, forceNow)
     end
 end
 
+local function ArmWorldEntryMusicSettle(reason)
+    if not (C_Timer and C_Timer.After) then
+        return false
+    end
+
+    local settleReason = tostring(reason or "world entry")
+    local armedUntil = GetTime() + MUSIC_WORLD_ENTRY_SETTLE_SECONDS
+    state.musicWorldEntrySuppressUntil = armedUntil
+
+    LogMusic("Armed world-entry music settle window for " ..
+        tostring(MUSIC_WORLD_ENTRY_SETTLE_SECONDS) .. "s [" .. settleReason .. "].")
+    RecordMusicTrace("Armed world-entry settle reason=" .. settleReason ..
+        " seconds=" .. tostring(MUSIC_WORLD_ENTRY_SETTLE_SECONDS))
+
+    C_Timer.After(MUSIC_WORLD_ENTRY_SETTLE_SECONDS, function()
+        if state.musicWorldEntrySuppressUntil ~= armedUntil then
+            return
+        end
+
+        state.musicWorldEntrySuppressUntil = 0
+    end)
+
+    return true
+end
+
 local function ResetMusicState(stopPlayback)
     if stopPlayback then
         StopInjectedMusic(MUSIC_TRANSITION_FADE_MS)
@@ -1742,6 +1771,9 @@ local function ResetMusicState(stopPlayback)
     state.musicUpdateAccumulator = 0
     state.musicIntroPending = false
     state.musicLastGlobalMusicEnabled = nil
+    state.musicPendingWorldEntry = false
+    state.musicSkipIntroOnWorldEntry = false
+    state.musicWorldEntrySuppressUntil = 0
     state.musicLastNativeStopAt = 0
     SetNativeMusicVolumeSuppressed(false, "reset")
     SetNativeAmbienceSuppressed(false, "reset")
@@ -1774,6 +1806,9 @@ local function ShutdownMusicState(reason)
     state.musicUpdateAccumulator = 0
     state.musicIntroPending = false
     state.musicLastGlobalMusicEnabled = nil
+    state.musicPendingWorldEntry = false
+    state.musicSkipIntroOnWorldEntry = false
+    state.musicWorldEntrySuppressUntil = 0
 
     RestoreInterruptedTemporaryCVars(tostring(reason or "shutdown"))
 end
@@ -1941,17 +1976,20 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
     SetNativeAmbienceSuppressed(shouldSuppressNativeAmbience, reason)
 
     if not IsGlobalMusicEnabled() then
+        state.musicPendingWorldEntry = false
         state.musicCurrentAreaKey = context.areaKey
         state.musicCurrentRegionKey = context.regionKey
         state.musicLastContextSignature = contextSignature
         return
     end
 
-    if context.zoneName ~= state.musicLastZoneName or
-       context.subZoneName ~= state.musicLastSubZoneName or
-       context.isResting ~= state.musicLastResting or
-       context.isIndoor ~= state.musicLastIndoor or
-       context.isNight ~= state.musicLastNight then
+    local locationChanged = context.zoneName ~= state.musicLastZoneName or
+        context.subZoneName ~= state.musicLastSubZoneName or
+        context.isResting ~= state.musicLastResting or
+        context.isIndoor ~= state.musicLastIndoor or
+        context.isNight ~= state.musicLastNight
+
+    if locationChanged then
         LogMusic("Context change [" .. tostring(reason or "update") .. "]: zone=" ..
             tostring(context.zoneName ~= "" and context.zoneName or "<none>") ..
             " subzone=" .. tostring(context.subZoneName ~= "" and context.subZoneName or "<none>") ..
@@ -2010,11 +2048,20 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
             RecordMusicTrace("Music replacement inactive; stopping injected music.")
             StopInjectedMusic(MUSIC_TRANSITION_FADE_MS)
         end
+        state.musicPendingWorldEntry = false
         state.musicCurrentAreaKey = context.areaKey
         state.musicCurrentRegionKey = context.regionKey
         state.musicLastContextSignature = contextSignature
         state.musicIntroPending = false
         return
+    end
+
+    if state.musicPendingWorldEntry then
+        state.musicPendingWorldEntry = false
+        state.musicSkipIntroOnWorldEntry = true
+        ArmWorldEntryMusicSettle(reason or "world entry")
+        LogMusic("Promoted pending world-entry arrival into an active settle window inside supported music scope.")
+        RecordMusicTrace("Promoted pending world-entry arrival reason=" .. tostring(reason or "world entry"))
     end
 
     local enteringSupportedZone = (state.musicLastContextSignature ~= nil and state.musicCurrentAreaKey == nil)
@@ -2029,7 +2076,12 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
         state.musicExpectedEndTime <= 0 and
         ((GetTime() - state.musicLastTrackStartedAt) >= MUSIC_TRACK_ROTATE_SECONDS)
 
-    local shouldForceNativeGuard = forceTrackRefresh or globalMusicToggleChanged or enteringSupportedZone or areaChanged or regionChanged
+    local shouldForceNativeGuard = forceTrackRefresh or
+        globalMusicToggleChanged or
+        enteringSupportedZone or
+        areaChanged or
+        regionChanged or
+        locationChanged
     if shouldForceNativeGuard then
         EnforceNativeMusicSuppression(reason or "update", true)
     elseif not MUSIC_SUPPRESS_NATIVE_WITH_VOLUME then
@@ -2040,7 +2092,24 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
     -- Region boundary swaps inside supported territory must not
     -- keep re-queuing intro tracks.
     if enteringSupportedZone then
-        state.musicIntroPending = ShouldQueueMusicIntro(context.regionKey)
+        if state.musicSkipIntroOnWorldEntry then
+            state.musicIntroPending = false
+            state.musicSkipIntroOnWorldEntry = false
+            LogMusic("Skipping addon intro on world entry because the client arrived through a loading screen.")
+            RecordMusicTrace("Skipped addon intro on world-entry supported arrival.")
+        else
+            state.musicIntroPending = ShouldQueueMusicIntro(context.regionKey)
+        end
+    end
+
+    if (state.musicWorldEntrySuppressUntil or 0) > GetTime() then
+        state.musicIntroPending = false
+        state.musicSkipIntroOnWorldEntry = false
+        EnforceNativeMusicSuppression((reason or "world entry") .. " settle", true)
+        state.musicCurrentAreaKey = context.areaKey
+        state.musicCurrentRegionKey = context.regionKey
+        state.musicLastContextSignature = contextSignature
+        return
     end
 
     if state.musicManualStop then
@@ -2975,6 +3044,11 @@ local function BeginStartupMusicChannelPurge(reason)
         state.musicStartupPurgeInProgress = false
 
         state.musicStartupPurgeReason = nil
+        if resumeContext.supported and IsMusicReplacementActive() and IsGlobalMusicEnabled() then
+            state.musicPendingWorldEntry = false
+            state.musicSkipIntroOnWorldEntry = true
+            ArmWorldEntryMusicSettle(resumedReason)
+        end
 
         EvaluateMusicState(resumedReason .. " resume", true)
         RefreshUI()
@@ -3682,7 +3756,7 @@ frame:RegisterEvent("PLAYER_UPDATE_RESTING")
 frame:RegisterEvent("CVAR_UPDATE")
 frame:RegisterEvent("PLAYER_LOGOUT")
 
-frame:SetScript("OnEvent", function(self, event, arg1)
+frame:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then return end
 
@@ -3703,7 +3777,13 @@ frame:SetScript("OnEvent", function(self, event, arg1)
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         local startupMusicContext = GetMusicContext()
-        local shouldPurgeStartupMusic = startupMusicContext.supported
+        local shouldHandleWorldEntryMusic = IsMusicReplacementActive()
+            and IsGlobalMusicEnabled()
+        state.musicPendingWorldEntry = shouldHandleWorldEntryMusic and true or false
+        state.musicSkipIntroOnWorldEntry = false
+        state.musicWorldEntrySuppressUntil = 0
+        local shouldPurgeStartupMusic = shouldHandleWorldEntryMusic
+            and startupMusicContext.supported
             and IsMusicReplacementActive()
             and IsGlobalMusicEnabled()
 
@@ -3721,9 +3801,21 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "GOSSIP_CLOSED" then
         OnGossipClosed()
 
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        local areaMusicContext = GetMusicContext()
+        if areaMusicContext.supported and IsMusicReplacementActive() and IsGlobalMusicEnabled() then
+            state.musicPendingWorldEntry = false
+            state.musicSkipIntroOnWorldEntry = true
+            if (state.musicWorldEntrySuppressUntil or 0) <= GetTime() then
+                ArmWorldEntryMusicSettle(event)
+            end
+        end
+
+        EvaluateMusicState(event, false)
+        RefreshUI()
+
     elseif event == "ZONE_CHANGED" or
            event == "ZONE_CHANGED_INDOORS" or
-           event == "ZONE_CHANGED_NEW_AREA" or
            event == "PLAYER_UPDATE_RESTING" then
         -- Let the music logic decide whether a real playback refresh
         -- is warranted. These events still update trace logs, but we
@@ -3764,7 +3856,9 @@ frame:SetScript("OnUpdate", function(self, elapsed)
         return
     end
 
-    if state.musicWasInSupportedZone and (state.musicHandle or state.musicCurrentTrackID) and IsGlobalMusicEnabled() then
+    local worldEntrySettleActive = (state.musicWorldEntrySuppressUntil or 0) > GetTime()
+    if state.musicWasInSupportedZone and IsGlobalMusicEnabled() and
+        ((state.musicHandle or state.musicCurrentTrackID) or worldEntrySettleActive) then
         EnforceNativeMusicSuppression("heartbeat", false)
     end
 

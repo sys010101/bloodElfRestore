@@ -1,6 +1,6 @@
 # Blood Elf Restore
 
-Version: `0.6.1-alpha`
+Version: `0.6.2-alpha`
 
 ## Disclaimer
 
@@ -14,7 +14,7 @@ If that is not your thing, please abstain from low-value or useless comments.
 
 Blood Elf Restore is a World of Warcraft addon for Midnight-era Quel'Thalas that suppresses selected new Blood Elf NPC voice lines and injects original TBC-era Blood Elf voice sets during NPC interaction events.
 
-It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked supported-zone music FileDataIDs and injects old TBC regional music on the `Music` channel without intentionally touching unrelated zones.
+It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked supported-zone music FileDataIDs and injects old TBC regional music on `Master` while temporarily forcing native `Sound_MusicVolume=0` in supported zones.
 
 ## What The Addon Does
 
@@ -73,7 +73,7 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - Midnight music muting is now applied only while you are actually in a supported music region; it is no longer globally applied on login
 - Supported interiors can now mute both Midnight `mus_120_*` music and Blizzard generic tavern / inn zonemusic to prevent overlap in places like `Wayfarer's Rest`
 - The generated Midnight catalog is loaded at runtime and currently provides the main music mute coverage, with Harandar families intentionally excluded
-- Replacement music now uses the real `Music` channel, so the in-game music slider controls both native and injected music consistently
+- Replacement music now uses `Master` while supported replacement ownership temporarily forces native `Sound_MusicVolume=0`, which is the current reliable fix for Silvermoon load-screen overlap
 - Temporary CVar backups for music volume, ambience, and dialog are restored on area exit, `/reload`, and logout
 - Ctrl+M and global sound-toggle changes now trigger immediate music re-evaluation (`CVAR_UPDATE`) without waiting for periodic ticks
 - The settings UI is now split into separate `Voice` and `Music` tabs
@@ -139,7 +139,7 @@ The current music layer also:
 - reads intro cooldown rules from `Config.lua` instead of one hardcoded runtime constant
 - lets known tracks finish naturally instead of cutting them off with the old coarse timer
 - keeps `/belr music stop` idle until a real resume trigger occurs
-- preserves the player's music slider instead of intentionally forcing `Sound_MusicVolume=0` during steady-state replacement playback
+- temporarily forces native `Sound_MusicVolume=0` only while supported replacement music is active, then restores the previous value on exit, `/reload`, and logout
 
 ## Main Files
 
@@ -326,7 +326,7 @@ New bugs and regressions should be tracked in the repo issue tracker rather than
 - `UnitSex` appears inverted for current Midnight Blood Elf NPCs, so the addon treats it as reversed by default.
 - Role classification still uses name heuristics for many NPCs.
 - The role-pool slicing logic depends on the exact list order in `SoundData.lua`.
-- Music replacement now uses the `Music` channel, so setting WoW's music slider to `0` will silence both native and injected music by design.
+- Music replacement currently uses `Master` while native `Sound_MusicVolume` is forced to `0` in supported areas, so WoW's music slider does not directly control the injected track during replacement playback.
 - The generated Midnight catalog covers `mus_120_*` families, but manual follow-up may still be needed for anonymous `mus_1200_*` IDs or non-listfile SoundKit playback.
 - The music trace recorder does not create a standalone text file. It writes into SavedVariables, which WoW flushes to disk on `/reload` or logout.
 - Large trace captures should be done in a single pass and then cleared; the recorder keeps a capped ring buffer, not an infinite log.

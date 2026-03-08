@@ -314,13 +314,13 @@ BElfVR_Config = {
             nativeGuardIntervalSeconds = 0.25,
 
             -- WoW sound channel used for injected TBC music.
-            -- `Music` is the intended stable value because it respects
-            -- the player's own music slider.
-            playbackChannel = "Music",
+            -- `Master` keeps injected replacement music audible while
+            -- the addon hard-suppresses Blizzard's native music channel.
+            playbackChannel = "Master",
 
-            -- Keep this false unless you are explicitly testing the old
-            -- "force Sound_MusicVolume to 0" suppression path again.
-            suppressNativeWithVolume = false,
+            -- Keep this enabled while replacement music uses a non-Music
+            -- channel so native Midnight music cannot bleed underneath.
+            suppressNativeWithVolume = true,
             nativeSuppressVolume = 0,
 
             -- Regions where ambient-channel suppression is allowed as a

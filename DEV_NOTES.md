@@ -3,11 +3,11 @@
 ## Current Purpose
 
 Current working version:
-- `0.6.1-alpha`
+- `0.6.2-alpha`
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Quel'Thalas while muting the newer Midnight replacement voice set.
 
-It also now includes a scoped Midnight Quel'Thalas music replacement layer for `Silvermoon City`, `Eversong Woods`, `Sunstrider Isle`, southern Eversong remastered subzones, `Ruins of Deatholme`, and selected interiors. That layer mutes tracked supported-zone music FileDataIDs, injects old TBC music on the `Music` channel, and intentionally leaves unrelated zones native.
+It also now includes a scoped Midnight Quel'Thalas music replacement layer for `Silvermoon City`, `Eversong Woods`, `Sunstrider Isle`, southern Eversong remastered subzones, `Ruins of Deatholme`, and selected interiors. That layer mutes tracked supported-zone music FileDataIDs, injects old TBC music on `Master`, temporarily forces native `Sound_MusicVolume=0` while replacement music owns a supported region, and intentionally leaves unrelated zones native.
 
 Main behavior:
 - Mutes tracked Midnight Blood Elf voice FileDataIDs from `SoundData.lua`
@@ -241,8 +241,9 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
 - Long stays in the same supported area still have fallback periodic rotation for unknown-duration cases
 - The music shuffle system keeps recently played TBC tracks on a cooldown so the same track does not immediately repeat
 - Playback routing now keys off a stable region + day/night signature instead of tiny subzone churn, which greatly reduces constant restarts while moving around Silvermoon
-- Injected replacement music now plays on the real `Music` channel, so the user's music slider controls both native and injected playback consistently
-- The old steady-state `Sound_MusicVolume=0` suppression path is disabled; the addon now relies on scoped `MuteSoundFile()` coverage plus `StopMusic()` guards instead of hijacking the slider
+- Loading-screen arrivals into supported music space now arm a short world-entry settle window before addon playback is allowed to start
+- Injected replacement music currently plays on `Master`, not `Music`, so the addon can hard-suppress Blizzard's native music channel without cutting its own replacement track
+- The steady-state `Sound_MusicVolume=0` suppression path was reinstated for supported replacement ownership after some Silvermoon load-screen arrivals kept native Midnight music alive through tracked muting and repeated `StopMusic()` guards
 - Temporary audio-setting backups are persisted in `BElfVRDB.pendingCVarRestores` and restored on area exit, addon load, `/reload`, and `PLAYER_LOGOUT`
 - `Sound_EnableAmbience` suppression remains a narrow Deatholme-specific fallback path, with the same persisted-restore safety
 - Ctrl+M and global music toggles now trigger immediate re-evaluation through `CVAR_UPDATE` handling
@@ -418,6 +419,40 @@ In `BElfRestore.lua`:
 5. Expand the Midnight Quel'Thalas scope tokens, native-only tokens, and subzone allow-lists from recorded trace sessions
 6. Use recorded trace sessions to identify additional anonymous `mus_1200_*` or non-listfile music playback that still leaks through
 
+## Session Update (2026-03-08 - Silvermoon World-Entry Music Overlap Fix)
+
+This follow-up was specifically for the stubborn Silvermoon double-music bug that still happened on reload, hearth, teleport, and other loading-screen arrivals after the broader 0.6.1-alpha hotfix pass.
+
+Observed failure mode:
+
+- Native Midnight Silvermoon music could survive:
+  - tracked music FileDataID muting
+  - startup music purge ordering
+  - repeated `StopMusic()` guards
+  - delayed world-entry settle windows
+- The overlap was easiest to reproduce on `ZONE_CHANGED_NEW_AREA` arrivals into `Silvermoon City`, where Blizzard's native track would keep playing underneath injected TBC day music.
+
+What changed:
+
+- Added explicit world-entry settle handling for supported music arrivals:
+  - pending world-entry tracking across loading screens
+  - intro suppression for loading-screen arrivals
+  - short post-arrival settle window before replacement playback is allowed
+  - repeated native `StopMusic()` guard pulses during the settle window
+  - direct `ZONE_CHANGED_NEW_AREA` arming so the fix does not depend on Blizzard event ordering
+- Reverted supported-zone replacement playback back to `Master`
+- Re-enabled supported-zone steady-state native suppression through `Sound_MusicVolume=0`
+- Kept persisted restore safety for temporary audio CVars so the player's previous values still recover on exit, reload, addon load, and logout
+
+Practical outcome:
+
+- Silvermoon reload, teleport, and hearth arrivals no longer stack Midnight native music with old TBC replacement music
+- The earlier "play on `Music` and avoid slider hijacking" model is no longer the active runtime design
+
+Tradeoff:
+
+- While supported replacement music is active, the user's music slider no longer directly controls the injected TBC track because playback is back on `Master`
+
 ## Session Update (2026-03-07 - Music Hardening, Catalog Refactor, and Documentation Pass)
 
 This session was the large cleanup after repeated music-overlap regressions in Deatholme, Harandar, and Silvermoon interiors.
@@ -460,6 +495,7 @@ What changed:
   - persisted restore values were added for `Sound_EnableAmbience`
   - persisted restore values were added for `Sound_EnableDialog`
   - recovery runs on addon load and `PLAYER_LOGOUT`
+  - this `Music`-channel model was later reverted on `2026-03-08` after Silvermoon load-screen arrivals still produced native+TBC overlap
 - Expanded the real user-editable config surface:
   - created `Config.lua`
   - moved safe voice/music/UI policy tables out of hardcoded runtime blocks
@@ -477,6 +513,7 @@ Removed or superseded behavior:
 - Removed the assumption that music problems were only Silvermoon / Eversong problems
 - Removed the old "mute everything globally and hope it is fine" music path
 - Removed the old documentation assumption that replacement music intentionally used `Master` with `Sound_MusicVolume=0` in steady-state
+  - this was accurate for the 2026-03-07 runtime, but was later reversed by the 2026-03-08 Silvermoon world-entry fix
 
 Current practical debugging rule:
 
