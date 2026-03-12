@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.4-alpha - 2026-03-12
+
+- Added `silvermoon_interior` music region with dedicated GL_ScenicWalk TBC tracks (`53513`, `53514`, `53515`) for calm indoor ambience inside Silvermoon City buildings.
+- Added `IsIndoors()` detection in `GetMusicContext()` so Silvermoon City interiors automatically route to the interior pool instead of the outdoor day/night cycle.
+- Added `Wayfarer's Rest` as an explicit supported subzone with `silvermoon_interior` routing in `Config.lua`.
+- Added fallback chain so empty `silvermoon_interior` pool categories (such as intro) fall back to the regular Silvermoon outdoor chain.
+- Added voice test slash commands to `README.md` Commands section (`/belr test male greet`, etc.).
+- Added Installation and Addon Structure sections to `README.md` with folder layout and TOC load order.
+- Fixed `README.md` LICENSE link from absolute Windows path to relative `[LICENSE](LICENSE)`.
+- Fixed `README.md` scope config attribution from `BElfRestore.lua` to `Config.lua`.
+- Updated `README.md`, `DEV_NOTES.md`, `CHANGELOG.md`, and release metadata for `0.6.4-alpha`.
+
 ## 0.6.3-alpha - 2026-03-08
 
 - Fixed supported-region music transitions that could keep the previous injected TBC region track playing until its natural end instead of handing off immediately to the new region.

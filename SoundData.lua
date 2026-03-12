@@ -366,6 +366,22 @@ BElfVR_TBCMusicRegions = {
         day = {},
         night = {},
     },
+    silvermoon_interior = {
+        -- Silvermoon City interior pool.
+        -- Uses the Ghostlands scenic walk tracks as calm indoor ambience
+        -- instead of the louder outdoor Silvermoon day/night cycle.
+        intro = {},
+        day = {
+            53513, -- GL_ScenicWalkUni01
+            53514, -- GL_ScenicWalkUni02
+            53515, -- GL_ScenicWalkUni03
+        },
+        night = {
+            53513, -- GL_ScenicWalkUni01
+            53514, -- GL_ScenicWalkUni02
+            53515, -- GL_ScenicWalkUni03
+        },
+    },
     eversong = {
         -- A soft scene-setter used when entering the broader Eversong region.
         intro = {

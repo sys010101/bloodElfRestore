@@ -17,6 +17,7 @@
 --
 --  Region keys currently used by the music system:
 --  - `silvermoon`
+--  - `silvermoon_interior`
 --  - `eversong`
 --  - `sunstrider`
 --  - `eversong_south`
@@ -246,6 +247,17 @@ BElfVR_Config = {
                     role = "standard",
                 },
 
+                -- Silvermoon innkeepers whose tooltip race is hidden by
+                -- Midnight but who are clearly Blood Elf NPCs.
+                ["innkeeper jovia"] = {
+                    role = "standard",
+                    vendor = true,
+                },
+                ["innkeeper velandra"] = {
+                    role = "standard",
+                    vendor = true,
+                },
+
                 -- Player mount service vendors should never inherit the
                 -- Blood Elf fallback classifier.
                 ["cousin slowhands"] = {
@@ -355,6 +367,7 @@ BElfVR_Config = {
 
             supportedSubZones = {
                 "the bazaar",
+                "wayfarer's rest",
             },
 
             -- Areas that must always stay native even if the parent zone
@@ -402,6 +415,7 @@ BElfVR_Config = {
                 ["thalassian range"] = "eversong_south",
                 ["windrunner spire"] = "eversong_south",
                 ["windrunner village"] = "eversong_south",
+                ["wayfarer's rest"] = "silvermoon_interior",
                 ["zeb'nowa"] = "amani",
                 ["zeb'tela ruins"] = "amani",
             },

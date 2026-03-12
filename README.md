@@ -1,6 +1,6 @@
 # Blood Elf Restore
 
-Version: `0.6.3-alpha`
+Version: `0.6.4-alpha`
 
 ## Disclaimer
 
@@ -61,6 +61,7 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
   - non-Midnight world zones
 - Region routing now distinguishes:
   - `silvermoon`
+  - `silvermoon_interior`
   - `eversong`
   - `sunstrider`
   - `eversong_south`
@@ -71,7 +72,8 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
   - explicit overrides for `Amani Pass`, `Zeb'Nowa`, and `Zeb'tela Ruins`
   - name-pattern fallback for subzones containing `amani` or `zeb'`
 - Midnight music muting is now applied only while you are actually in a supported music region; it is no longer globally applied on login
-- Supported interiors can now mute both Midnight `mus_120_*` music and Blizzard generic tavern / inn zonemusic to prevent overlap in places like `Wayfarer's Rest`
+- Supported interiors can now mute both Midnight `mus_120_*` music and Blizzard generic tavern / inn zonemusic to prevent overlap in supported interior subzones
+- Silvermoon City interiors detected via `IsIndoors()` or explicit subzone overrides such as `Wayfarer's Rest` now route to a dedicated `silvermoon_interior` pool with calm scenic music instead of the outdoor day/night cycle
 - The generated Midnight catalog is loaded at runtime and currently provides the main music mute coverage, with Harandar families intentionally excluded
 - Replacement music now uses `Master` while supported replacement ownership temporarily forces native `Sound_MusicVolume=0`, which is the current reliable fix for Silvermoon load-screen overlap
 - Moving between supported music regions now forces an immediate TBC music handoff instead of waiting for the old injected region track to finish naturally
@@ -100,7 +102,7 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - The addon cannot reliably read the exact native Midnight music FileDataID currently playing
 - Music transitions are smoother than a hard stop, but they are still limited by what `PlaySoundFile()` and `StopSound()` allow on the addon side
 - Music muting now depends on a generated Midnight catalog plus manually maintained supplemental IDs in `SoundData.lua`; anonymous `mus_1200_*` IDs or non-listfile SoundKit playback can still require manual follow-up
-- Supported-zone continuity for interiors and enclave slices depends on the scope tokens, native-only tokens, and subzone overrides in `BElfRestore.lua`
+- Supported-zone continuity for interiors and enclave slices depends on the scope tokens, native-only tokens, and subzone overrides in `Config.lua`
 
 ## Core Design
 
@@ -132,7 +134,8 @@ The music system uses a similar approximation model:
 
 The current music layer also:
 
-- uses region-specific pools for broader Eversong, Sunstrider Isle, southern Eversong remastered areas, a dedicated Deatholme pocket, and Amani routing
+- uses region-specific pools for broader Eversong, Sunstrider Isle, southern Eversong remastered areas, a dedicated Deatholme pocket, Amani routing, and a Silvermoon interior pool
+- detects Silvermoon City interiors via `IsIndoors()` and routes them to calm scenic music instead of the outdoor day/night cycle
 - loads a generated Midnight music catalog from wowdev/wow-listfile release `202603061837`
 - excludes Harandar music families from addon muting so Harandar stays native
 - supplements the Midnight catalog with Blizzard generic tavern / inn / rest-area zonemusic for supported interiors
@@ -142,6 +145,42 @@ The current music layer also:
 - lets known tracks finish naturally instead of cutting them off with the old coarse timer
 - keeps `/belr music stop` idle until a real resume trigger occurs
 - temporarily forces native `Sound_MusicVolume=0` only while supported replacement music is active, then restores the previous value on exit, `/reload`, and logout
+
+## Installation
+
+Clone or download this repository into your WoW addons directory so the folder is named `bloodElfRestore`:
+
+```
+World of Warcraft\_retail_\Interface\AddOns\bloodElfRestore\
+```
+
+The folder name must match the TOC filename exactly or WoW will not load the addon.
+
+## Addon Structure
+
+```
+bloodElfRestore/
+├── bloodElfRestore.toc          Addon metadata and load order
+├── Config.lua                   User-editable policy layer
+├── Midnight_ID_catalog.lua      Generated Midnight music catalog (runtime)
+├── SoundData.lua                Mute IDs, TBC voice/music pools
+├── BElfRestore.lua              Main logic, UI, event handling
+├── LICENSE                      MIT License
+├── README.md                    This file
+├── CHANGELOG.md                 Version history
+├── DEV_NOTES.md                 Developer handoff notes
+├── Midnight_ID_Index.md         Human-readable Midnight music index
+├── TBC_ID_INDEX.md              Human-readable TBC zone-music index
+├── TBC_ID_CATALOG.lua           TBC zone-music ID catalog (reference)
+├── assets/
+│   └── tbc_art.jpg              Optional UI background art
+└── tools/
+    ├── generate_midnight_catalog.ps1
+    └── generate_tbc_catalog.ps1
+```
+
+Files are loaded by WoW in the order specified in `bloodElfRestore.toc`:
+`Config.lua` → `Midnight_ID_catalog.lua` → `SoundData.lua` → `BElfRestore.lua`
 
 ## Main Files
 
@@ -293,6 +332,20 @@ Music test playback:
 - `/belr test music night`
   Plays one of the configured nighttime music tracks for testing.
 
+Voice test playback:
+- `/belr test male greet`
+  Plays a random male greet line.
+- `/belr test male bye`
+  Plays a random male bye line.
+- `/belr test male pissed`
+  Plays a random male pissed line.
+- `/belr test female greet`
+  Plays a random female greet line.
+- `/belr test female bye`
+  Plays a random female bye line.
+- `/belr test female pissed`
+  Plays a random female pissed line.
+
 ## UI Controls
 
 - Hovering a checkbox shows a plain-English explanation of what it does.
@@ -336,7 +389,7 @@ New bugs and regressions should be tracked in the repo issue tracker rather than
 
 ## License
 
-This project is released under the MIT License. See [LICENSE](C:\Program Files (x86)\World of Warcraft\_retail_\Interface\AddOns\bloodElfRestore\LICENSE) for the full text.
+This project is released under the MIT License. See [LICENSE](LICENSE) for the full text.
 
 ## Future Work
 

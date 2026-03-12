@@ -401,6 +401,7 @@ SETTINGS_TAB_START_X = math.floor((SETTINGS_UI_WIDTH - SETTINGS_TAB_GROUP_WIDTH)
 -- mapping, but they should not constantly restart the same track
 -- while you move around inside one logical music region.
 MUSIC_REGION_SILVERMOON = "silvermoon"
+MUSIC_REGION_SILVERMOON_INTERIOR = "silvermoon_interior"
 MUSIC_REGION_EVERSONG = "eversong"
 MUSIC_REGION_SUNSTRIDER = "sunstrider"
 MUSIC_REGION_EVERSONG_SOUTH = "eversong_south"
@@ -1473,6 +1474,16 @@ local function GetMusicTrackPool(regionKey, poolName)
         return regionPool, canonicalRegionKey
     end
 
+    -- If a Silvermoon interior pool is empty for this category, fall back
+    -- to the regular Silvermoon outdoor chain so playback still works.
+    if canonicalRegionKey == MUSIC_REGION_SILVERMOON_INTERIOR and BElfVR_TBCMusicRegions then
+        local smRegionData = BElfVR_TBCMusicRegions[MUSIC_REGION_SILVERMOON]
+        local smRegionPool = smRegionData and smRegionData[poolName]
+        if smRegionPool and #smRegionPool > 0 then
+            return smRegionPool, MUSIC_REGION_SILVERMOON
+        end
+    end
+
     -- If an explicit Amani bucket is missing in a custom pack, fall back to
     -- broader southern-Eversong routing so playback still works.
     if canonicalRegionKey == MUSIC_REGION_AMANI and BElfVR_TBCMusicRegions then
@@ -1563,6 +1574,18 @@ local function GetMusicContext()
         elseif supported and supportedByZone then
             regionKey = NormalizeMusicRegionKey(zoneKey)
         end
+    end
+
+    -- If the player is indoors inside Silvermoon City and no explicit
+    -- subzone override already routed to a different region, swap to
+    -- the dedicated interior pool so buildings get calm scenic music
+    -- instead of the louder outdoor day/night cycle.
+    -- IsIndoors() returns 1 when the WoW client considers the player
+    -- inside a roofed building; it returns nil for open-air areas and
+    -- large indoor spaces where mounting is allowed.
+    local wowIndoors = IsIndoors and IsIndoors()
+    if regionKey == MUSIC_REGION_SILVERMOON and wowIndoors then
+        regionKey = MUSIC_REGION_SILVERMOON_INTERIOR
     end
 
     return {

@@ -3,7 +3,7 @@
 ## Current Purpose
 
 Current working version:
-- `0.6.3-alpha`
+- `0.6.4-alpha`
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Quel'Thalas while muting the newer Midnight replacement voice set.
 
@@ -132,14 +132,21 @@ Added:
 - Saved per-NPC role overrides
 - Built-in default name-based profiles
 
-Current built-in defaults:
+Current built-in defaults (defined in `Config.lua` `voice.profiles.byName`):
 - `Lyrendal`
-  - role: `standard`
-  - vendor greet category
+  - role: `standard`, vendor greet category
 - `Mahra Treebender`
   - excluded from Blood Elf fallback classification
 - `Silvermoon Resident`
   - role: `standard`
+- `Doomsayer`
+  - role: `standard`
+- `Household Attendant`
+  - role: `standard`
+- `Cousin Slowhands`, `Mystic Birdhat`, `Collector Unta`, `Merchant Maku`, `Killia`, `Melanie Morten`
+  - excluded (mount service vendors, not Blood Elf NPCs)
+- `Sin'dorei Child`, `Sin'dorei Children`, `Sindorei Child`, `Blood Elf Child`, `Silvermoon Child`, `Sin'dorei Orphan`
+  - excluded (no TBC child voice pool)
 
 Manual override commands still exist:
 - `/belr force male`
@@ -203,6 +210,7 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - `Eversong Woods`
 - Region routing now groups playback into:
   - `silvermoon`
+  - `silvermoon_interior`
   - `eversong`
   - `sunstrider`
   - `eversong_south`
@@ -210,6 +218,7 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - `amani`
 - Supported subzone fallback and override routing now includes:
   - `The Bazaar`
+  - `Wayfarer's Rest` mapped into the dedicated `silvermoon_interior` family
   - `Sunstrider Isle`
   - `Tranquillien`
   - `Sanctum of the Moon`
@@ -351,13 +360,13 @@ If that ordering changes, update the role layout tables in:
 
 ### Where To Add Built-In Automatic Fixes
 
-In `BElfRestore.lua`:
+In `Config.lua` (read by `BElfRestore.lua` at startup):
 
-- `DEFAULT_GENDER_OVERRIDES`
+- `voice.overrides.genderByNPCID` → builds `DEFAULT_GENDER_OVERRIDES`
   - For known NPC IDs with wrong client-reported gender
-- `DEFAULT_ROLE_OVERRIDES`
+- `voice.overrides.roleByNPCID` → builds `DEFAULT_ROLE_OVERRIDES`
   - For known NPC IDs with wrong role classification
-- `DEFAULT_NAME_PROFILES`
+- `voice.profiles.byName` → builds `DEFAULT_NAME_PROFILES`
   - For repeated NPC names that need fallback handling without exact IDs
   - Supports `role`, optional `vendor=true`, and optional `exclude=true`
 - `BElfVRDB.guidGenderOverrides`
@@ -420,6 +429,36 @@ In `BElfRestore.lua`:
 4. Consider deprecating the old `genderOverrides` / `roleOverrides` saved-variable fields entirely in a cleanup pass
 5. Expand the Midnight Quel'Thalas scope tokens, native-only tokens, and subzone allow-lists from recorded trace sessions
 6. Use recorded trace sessions to identify additional anonymous `mus_1200_*` or non-listfile music playback that still leaks through
+
+## Session Update (2026-03-12 - Silvermoon Interior Music and Documentation Pass)
+
+This session added dedicated Silvermoon City interior music support and resolved several README-to-code discrepancies found during a full cross-reference review.
+
+What changed:
+
+- Added `silvermoon_interior` music region with GL_ScenicWalk TBC tracks (`53513`, `53514`, `53515`) in `SoundData.lua`
+- Added `IsIndoors()` detection in `GetMusicContext()`:
+  - When the player is inside Silvermoon City and `IsIndoors()` returns true, the region swaps from `silvermoon` to `silvermoon_interior`
+  - Explicit subzone overrides still win over the `IsIndoors()` fallback
+  - Walking back outside returns to the normal `silvermoon` outdoor day/night cycle
+  - The `ZONE_CHANGED_INDOORS` event (already registered) triggers re-evaluation automatically
+- Added `Wayfarer's Rest` as an explicit supported subzone in `Config.lua` with `silvermoon_interior` routing
+- Added fallback in `GetMusicTrackPool()` so empty `silvermoon_interior` categories (like intro) fall back to the regular Silvermoon outdoor chain, then to the legacy `BElfVR_TBCMusic` global pool
+- Added `MUSIC_REGION_SILVERMOON_INTERIOR` constant in `BElfRestore.lua`
+
+Documentation fixes from the cross-reference review:
+
+- Fixed `README.md` LICENSE link from an absolute Windows path to a relative `[LICENSE](LICENSE)` link
+- Fixed `README.md` scope config attribution from `BElfRestore.lua` to `Config.lua` (line 103)
+- Added all six voice test slash commands to `README.md` Commands section
+- Added Installation and Addon Structure sections to `README.md` with a folder tree and TOC load order
+- Updated interior and region routing descriptions across `README.md` and `DEV_NOTES.md`
+
+Known limitation:
+
+- `IsIndoors()` returns nil for large indoor spaces where WoW allows mounting, so some Silvermoon interiors may not trigger the swap
+- Interiors that change native Midnight music without any zone/subzone text change or `IsIndoors()` flag cannot be detected by addon Lua
+- Additional interior subzones can be added to `Config.lua` `bySubZone` routing as they are discovered during testing
 
 ## Session Update (2026-03-08 - Region Handoff and Protected GUID Hardening)
 
