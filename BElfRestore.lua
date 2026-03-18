@@ -817,6 +817,7 @@ local DB_DEFAULTS = {
     musicVerbose = false,
     musicUseIntro = true,
     musicTraceEnabled = false,
+    debugLog = {},
     musicTraceLog = {},
     musicIntroHistory = {},
     guidGenderOverrides = {},
@@ -942,6 +943,8 @@ local function Log(msg)
     if BElfVRDB and BElfVRDB.verbose then
         print("|cffFFD700[BElfVR]|r " .. tostring(msg))
     end
+    -- Also route to DebugChatFrame (always, if available)
+    c("Voice", tostring(msg))
 end
 
 -- Separate music logging keeps zone/music spam out of the normal
@@ -950,6 +953,8 @@ LogMusic = function(msg)
     if BElfVRDB and BElfVRDB.musicVerbose then
         print("|cff7FD4FF[BElfVR Music]|r " .. tostring(msg))
     end
+    -- Also route to DebugChatFrame (always, if available)
+    c("Music", tostring(msg))
 end
 
 -- WoW addons cannot write arbitrary text files directly.
@@ -2007,6 +2012,11 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
     if not BElfVRDB then
         return
     end
+    -- Only log non-periodic evaluations to avoid flooding the debug log
+    -- (periodic fires every ~1s from OnUpdate; meaningful changes log themselves)
+    if reason ~= "periodic" then
+        c("Music", "EvaluateMusicState:", tostring(reason), "force=" .. tostring(forceTrackRefresh))
+    end
 
     local globalMusicToggleChanged = HandleGlobalMusicToggle()
     RefreshMusicPlaybackLifetime()
@@ -2152,19 +2162,22 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
     -- Intro should only be a true "fresh entry" cue.
     -- Region boundary swaps inside supported territory must not
     -- keep re-queuing intro tracks.
+    --
+    -- Loading-screen arrivals (login, reload, zone portals) used to
+    -- unconditionally skip the intro.  Now we defer to the cooldown
+    -- system so the intro still plays after a long absence while
+    -- staying quiet on rapid relogs.
     if enteringSupportedZone then
-        if state.musicSkipIntroOnWorldEntry then
-            state.musicIntroPending = false
-            state.musicSkipIntroOnWorldEntry = false
-            LogMusic("Skipping addon intro on world entry because the client arrived through a loading screen.")
-            RecordMusicTrace("Skipped addon intro on world-entry supported arrival.")
-        else
-            state.musicIntroPending = ShouldQueueMusicIntro(context.regionKey)
+        state.musicSkipIntroOnWorldEntry = false
+        state.musicIntroPending = ShouldQueueMusicIntro(context.regionKey)
+        if state.musicIntroPending then
+            LogMusic("Intro queued for region " .. tostring(context.regionKey) .. " (cooldown check will follow).")
         end
     end
 
     if (state.musicWorldEntrySuppressUntil or 0) > GetTime() then
-        state.musicIntroPending = false
+        -- Preserve musicIntroPending across the settle window so the
+        -- intro can play once the settle expires.
         state.musicSkipIntroOnWorldEntry = false
         EnforceNativeMusicSuppression((reason or "world entry") .. " settle", true)
         state.musicCurrentAreaKey = context.areaKey
@@ -2656,6 +2669,7 @@ end
 -- gender: "male" or "female"
 -- category: "greet", "bye", or "pissed"
 local function PlayRandomTBC(gender, category, role, suppressNative)
+    c("Voice", "PlayRandomTBC:", tostring(gender), tostring(category), "role=" .. tostring(role or "mixed"))
     if not IsGlobalSoundEnabled() then
         Log("Skipping TBC " .. (category or "?") .. " because WoW sound output is disabled.")
         return
@@ -2825,6 +2839,7 @@ end
 
 local function ApplyMutes()
     if not BElfVRDB or not BElfVRDB.enabled then
+        c("Voice", "ApplyMutes: skipped — addon disabled")
         return
     end
 
@@ -3836,14 +3851,18 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         end
         MigrateSavedVariables()
         RestoreInterruptedTemporaryCVars("addon loaded")
+        BElfVR_InitDebug()
+        c("BElfVR", "ADDON_LOADED — DB schema:", tostring(BElfVRDB and BElfVRDB.schemaVersion or "?"))
 
     elseif event == "PLAYER_LOGIN" then
         CreateSettingsUI()
         ApplyMutes()
         RefreshUI()
+        c("BElfVR", "PLAYER_LOGIN — mutes applied, UI created")
         print("|cffFFD700[BElfRestore]|r Loaded. Type |cffFFFFFF/belr|r to open the UI (legacy |cffFFFFFF/belvr|r also works).")
 
     elseif event == "PLAYER_ENTERING_WORLD" then
+        c("BElfVR", "PLAYER_ENTERING_WORLD — zone:", tostring(GetZoneText()), "subzone:", tostring(GetSubZoneText()))
         local startupMusicContext = GetMusicContext()
         local shouldHandleWorldEntryMusic = IsMusicReplacementActive()
             and IsGlobalMusicEnabled()
@@ -3861,15 +3880,19 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         RefreshUI()
 
     elseif event == "PLAYER_TARGET_CHANGED" then
+        c("BElfVR", "PLAYER_TARGET_CHANGED — target:", tostring(UnitName("target") or "<none>"))
         OnTargetChanged()
 
     elseif event == "GOSSIP_SHOW" then
+        c("BElfVR", "GOSSIP_SHOW — target:", tostring(UnitName("target") or "<none>"))
         OnGossipShow()
 
     elseif event == "GOSSIP_CLOSED" then
+        c("BElfVR", "GOSSIP_CLOSED")
         OnGossipClosed()
 
     elseif event == "ZONE_CHANGED_NEW_AREA" then
+        c("BElfVR", "ZONE_CHANGED_NEW_AREA — zone:", tostring(GetZoneText()), "subzone:", tostring(GetSubZoneText()))
         local areaMusicContext = GetMusicContext()
         if areaMusicContext.supported and IsMusicReplacementActive() and IsGlobalMusicEnabled() then
             state.musicPendingWorldEntry = false
@@ -3885,15 +3908,16 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
     elseif event == "ZONE_CHANGED" or
            event == "ZONE_CHANGED_INDOORS" or
            event == "PLAYER_UPDATE_RESTING" then
-        -- Let the music logic decide whether a real playback refresh
-        -- is warranted. These events still update trace logs, but we
-        -- should not hard-refresh the track on every tiny subzone or
-        -- resting flag flip.
+        c("BElfVR", event, "— subzone:", tostring(GetSubZoneText()))
         EvaluateMusicState(event, false)
         RefreshUI()
 
     elseif event == "CVAR_UPDATE" then
         local cvarName = tostring(arg1 or "")
+        -- Only log sound-related CVars to avoid camera/perks/splash spam
+        if cvarName:find("^Sound_") then
+            c("BElfVR", "CVAR_UPDATE —", cvarName, "=", tostring(arg2 or "?"))
+        end
         if cvarName == "Sound_EnableMusic" then
             if state.musicStartupPurgeInProgress then
                 RefreshUI()
@@ -3912,6 +3936,7 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
             RefreshUI()
         end
     elseif event == "PLAYER_LOGOUT" then
+        c("BElfVR", "PLAYER_LOGOUT — shutting down music state")
         ShutdownMusicState("player logout")
     end
 end)
@@ -4237,6 +4262,12 @@ local function HandleSlashCommand(input)
         RefreshUI()
         print("|cff7FD4FF[BElfVR Music]|r Stopped injected music. Playback will stay idle until you move to a new area, re-enable WoW music, or force a refresh.")
 
+    elseif cmd == "dumplog" or cmd == "dump" then
+        BElfVR_ShowLogDump()
+
+    elseif cmd == "log clear" then
+        BElfVR_ClearLog()
+
     else
         print("|cffFFD700[BElfVR]|r Commands:")
         print("  |cffFFFFFF/belr|r                                  open the UI")
@@ -4279,6 +4310,8 @@ local function HandleSlashCommand(input)
         print("  |cffFFFFFF/belr test male greet|r / |cffFFFFFF/belr test male bye|r / |cffFFFFFF/belr test male pissed|r")
         print("  |cffFFFFFF/belr test female greet|r / |cffFFFFFF/belr test female bye|r / |cffFFFFFF/belr test female pissed|r")
         print("  |cffFFFFFF/belr test music intro|r / |cffFFFFFF/belr test music day|r / |cffFFFFFF/belr test music night|r")
+        print("  |cffFFFFFF/belr dumplog|r                           open a copyable window with the debug log")
+        print("  |cffFFFFFF/belr log clear|r                          clear the debug log buffer")
         print("  |cffFFFFFF/belvr ...|r                             legacy alias (same command set)")
     end
 end

@@ -1,6 +1,6 @@
 # Blood Elf Restore
 
-Version: `0.6.4-alpha`
+Version: `0.7.0-alpha`
 
 ## Disclaimer
 
@@ -29,6 +29,8 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - Injects region-aware TBC intro/day/night music while you remain in supported Midnight Quel'Thalas music areas
 - Uses shuffle-with-cooldown logic so the same TBC music track is strongly discouraged from repeating too soon
 - Can record music routing traces into SavedVariables for later analysis
+- Captures all debug output to a 2000-line ring-buffer log in SavedVariables, viewable in-game via `/belr dumplog`
+- Optionally routes all debug output to a dedicated chat tab via [DebugChatFrame](https://github.com/kapresoft/wow-addon-debug-chat-frame) (install separately if desired)
 - Exposes an in-game settings and test UI via `/belr`
 
 ## What Currently Works
@@ -82,8 +84,8 @@ It also includes a scoped Midnight Quel'Thalas music layer that mutes tracked su
 - Non-NPC gossip objects with protected or nonstandard GUID values now fail closed instead of crashing the addon while it tries to inspect or log them
 - The settings UI is now split into separate `Voice` and `Music` tabs
 - Music-tab action buttons now anchor below the live status block so longer status text does not overlap the controls
-- Music can optionally play an intro cue on fresh entry, then rotate through day or night pools
-- Intro cooldown history is now persisted in SavedVariables, so `/reload` does not count as a fresh intro reset
+- Music can optionally play an intro cue on entry into supported zones, then rotate through day or night pools
+- Intro cooldown (default 10 minutes) is persisted in SavedVariables across `/reload`, logout, and game restarts, so the intro only replays after the cooldown expires
 - Intro cooldown policy is now user-editable in `Config.lua` by region, zone, subzone, area (`zone||subzone`), pool, and exact FileDataID
 - Music trace recording can be enabled, walked through the city, and saved via `/reload` or logout for later tuning
 - `/belr status` now reports music region, scope source, override source, catalog counts, and supplemental mute counts
@@ -164,6 +166,7 @@ bloodElfRestore/
 ├── Config.lua                   User-editable policy layer
 ├── Midnight_ID_catalog.lua      Generated Midnight music catalog (runtime)
 ├── SoundData.lua                Mute IDs, TBC voice/music pools
+├── Debug.lua                    DebugChatFrame integration + log capture
 ├── BElfRestore.lua              Main logic, UI, event handling
 ├── LICENSE                      MIT License
 ├── README.md                    This file
@@ -180,12 +183,14 @@ bloodElfRestore/
 ```
 
 Files are loaded by WoW in the order specified in `bloodElfRestore.toc`:
-`Config.lua` → `Midnight_ID_catalog.lua` → `SoundData.lua` → `BElfRestore.lua`
+`Config.lua` → `Midnight_ID_catalog.lua` → `SoundData.lua` → `Debug.lua` → `BElfRestore.lua`
 
 ## Main Files
 
 - `Config.lua`
   User-editable policy layer for safe voice behavior, voice classification/scope rules, built-in name/ID overrides, music routing/scope/timing, intro cooldown rules, trace limits, and UI art/layout tuning.
+- `Debug.lua`
+  DebugChatFrame integration layer. Provides global `c()` and `cp()` logging shortcuts, a 2000-line ring-buffer log capture in SavedVariables, a copyable dump frame (`/belr dumplog`), and pre-init buffering for startup lines. Requires the optional [DebugChatFrame](https://github.com/kapresoft/wow-addon-debug-chat-frame) addon for the dedicated chat tab; falls back to `print()` if not installed. Log capture to SavedVariables works either way.
 - `BElfRestore.lua`
   Main logic, UI, event handling, classification, overrides, playback rules.
 - `SoundData.lua`
@@ -314,6 +319,12 @@ Music controls:
 - `/belr music stop`
   Stops the currently injected addon music and clears the music state.
 
+Debug log:
+- `/belr dumplog`
+  Opens a copyable window with the full debug log buffer. Use `Ctrl+A` then `Ctrl+C` to copy the contents.
+- `/belr log clear`
+  Clears the debug log buffer.
+
 Music trace recording:
 - `/belr music trace on`
   Starts recording music routing and playback lines into SavedVariables for later review.
@@ -372,6 +383,34 @@ Voice test playback:
 - Restore Midnight VO
 
 `Re-apply Mutes` also re-enables the mute option if it was previously turned off.
+
+## Debugging
+
+The addon includes a structured debug logging system. All voice, music, and event activity is captured to a ring buffer in SavedVariables and can optionally be routed to a dedicated in-game chat tab.
+
+### Built-in debug log (no extra addons needed)
+
+All `c()` debug output is captured to `BElfVRDB.debugLog` in SavedVariables (2000-line ring buffer). This persists across `/reload` and logout.
+
+- `/belr dumplog` opens a scrollable, copyable window in-game. Use `Ctrl+A` then `Ctrl+C` to copy the full log.
+- `/belr log clear` wipes the buffer.
+- The raw log is also available on disk after logout at: `WTF/Account/<ACCOUNT>/SavedVariables/bloodElfRestore.lua`
+
+### Optional: DebugChatFrame addon
+
+For a live-scrolling debug chat tab, install the [DebugChatFrame](https://github.com/kapresoft/wow-addon-debug-chat-frame) addon separately. When installed, all debug output is routed to a dedicated `BElfVR` tab in the chat pane in addition to the SavedVariables ring buffer.
+
+DebugChatFrame is entirely optional. If it is not installed, the addon falls back to `print()` for any output and the ring-buffer capture still works normally.
+
+### What gets logged
+
+- Addon lifecycle: `ADDON_LOADED`, `PLAYER_LOGIN`, `PLAYER_ENTERING_WORLD`, `PLAYER_LOGOUT`
+- Zone changes: `ZONE_CHANGED_NEW_AREA`, `ZONE_CHANGED`, `ZONE_CHANGED_INDOORS`
+- Target events: `PLAYER_TARGET_CHANGED` with NPC name
+- Gossip events: `GOSSIP_SHOW`, `GOSSIP_CLOSED`
+- Sound CVar changes: `Sound_EnableMusic`, `Sound_MusicVolume`, `Sound_EnableDialog`
+- Voice decisions: NPC classification, gender/role resolution, playback or skip reasons
+- Music decisions: track selection, intro cooldown checks, context changes, region handoffs
 
 ## Current Limitations
 

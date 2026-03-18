@@ -3,7 +3,7 @@
 ## Current Purpose
 
 Current working version:
-- `0.6.4-alpha`
+- `0.7.0-alpha`
 
 This addon restores old TBC-era Blood Elf NPC voice lines in Midnight-era Quel'Thalas while muting the newer Midnight replacement voice set.
 
@@ -32,6 +32,12 @@ Main behavior:
   - Holds manual Midnight music seed IDs
   - Holds supplemental supported-zone music mute IDs for non-Midnight Blizzard zonemusic
   - Holds TBC Silvermoon intro/day/night music FileDataIDs
+- `Debug.lua`
+  - DebugChatFrame integration + global `c()` / `cp()` logging shortcuts
+  - 2000-line ring-buffer log capture in `BElfVRDB.debugLog`
+  - Pre-init buffer for lines logged before `BElfVRDB` exists
+  - Copyable dump frame via `BElfVR_ShowLogDump()`
+  - Falls back to `print()` when [DebugChatFrame](https://github.com/kapresoft/wow-addon-debug-chat-frame) is not installed
 - `BElfRestore.lua`
   - Main addon logic
   - UI
@@ -42,6 +48,7 @@ Main behavior:
 - `bloodElfRestore.toc`
   - Correct TOC name matching the addon folder
   - Loads `Midnight_ID_catalog.lua` before `SoundData.lua`
+  - Loads `Debug.lua` before `BElfRestore.lua`
 - `Midnight_ID_catalog.lua`
   - Generated Midnight `mus_120_*` music catalog used at runtime
   - Source-of-truth dataset for bulk Midnight music muting
@@ -242,8 +249,8 @@ Blizzard uses multiple `npc=...` IDs for visually identical Midnight NPCs.
   - resting state changes
   - in-game day/night phase
   - relevant `CVAR_UPDATE` changes
-- A first-entry intro cue can optionally play before the day/night rotation
-- Intro cues now have a separate cooldown so they do not spam on quick re-entry
+- An intro cue can optionally play on entry into supported zones before the day/night rotation
+- Intro cues use a 10-minute cooldown persisted in SavedVariables so they do not spam on quick re-entry, including across relogs and game restarts
 - Intro cooldown history is persisted in `BElfVRDB.musicIntroHistory`, so `/reload` does not reset the intro timer
 - Intro cooldown policy is read from `Config.lua` and can be scoped by region, zone, subzone, area (`zone||subzone`), pool, and exact FileDataID
 - Known-duration tracks are now allowed to finish naturally instead of being cut off by the old coarse rotation timer
@@ -429,6 +436,55 @@ In `Config.lua` (read by `BElfRestore.lua` at startup):
 4. Consider deprecating the old `genderOverrides` / `roleOverrides` saved-variable fields entirely in a cleanup pass
 5. Expand the Midnight Quel'Thalas scope tokens, native-only tokens, and subzone allow-lists from recorded trace sessions
 6. Use recorded trace sessions to identify additional anonymous `mus_1200_*` or non-listfile music playback that still leaks through
+
+## Session Update (2026-03-18 - DebugChatFrame Integration, Log Dump, and Intro Music Fix)
+
+This session added full DebugChatFrame integration, a persistent debug log system, and fixed the long-standing intro music bug.
+
+### DebugChatFrame integration
+
+- Added `Debug.lua` as a new file loaded before `BElfRestore.lua`
+- Integrates with the optional [DebugChatFrame](https://github.com/kapresoft/wow-addon-debug-chat-frame) addon for a dedicated `BElfVR` chat tab
+- Provides global `c(...)` for standard logging and `cp(moduleName, ...)` for module-prefixed logging
+- Falls back to `print()` when DebugChatFrame is not installed
+- All `c()` / `cp()` output is also captured to a 2000-line ring buffer in `BElfVRDB.debugLog`
+- Pre-init buffer holds lines logged before `ADDON_LOADED` and flushes them once `BElfVR_InitDebug()` runs
+- Includes programmatic `LoadAddOn("DebugChatFrame")` fallback for both modern (`C_AddOns`) and legacy API paths
+- `BElfVR_InitDebug()` is called from the `ADDON_LOADED` block in `BElfRestore.lua`
+
+### Debug log dump
+
+- Added `/belr dumplog` (also `/belr dump`) — opens a draggable, scrollable EditBox frame with the full ring-buffer contents
+- Users can `Ctrl+A` then `Ctrl+C` to copy the entire log
+- Added `/belr log clear` to wipe the buffer
+- The raw log is also available at `WTF/Account/<ACCOUNT>/SavedVariables/bloodElfRestore.lua` after logout
+
+### Structured debug logging
+
+- Added `c()` calls at all major event handlers in `BElfRestore.lua`:
+  - `ADDON_LOADED`, `PLAYER_LOGIN`, `PLAYER_ENTERING_WORLD`, `PLAYER_TARGET_CHANGED`
+  - `GOSSIP_SHOW`, `GOSSIP_CLOSED`, zone changes, `CVAR_UPDATE`, `PLAYER_LOGOUT`
+- Bridged existing `Log()` → `c("Voice", ...)` and `LogMusic()` → `c("Music", ...)` so all existing verbose output also routes to DebugChatFrame
+- Added entry logging to `PlayRandomTBC()`, `ApplyMutes()`, and `EvaluateMusicState()`
+- Filtered `CVAR_UPDATE` logging to `Sound_*` CVars only (camera, perks, splash screen CVars are ignored)
+- Suppressed `EvaluateMusicState: periodic` heartbeat logging (~1s interval) to prevent log flooding
+
+### Intro music fix
+
+Root cause: loading-screen arrivals (login, reload, zone portals) always set `musicSkipIntroOnWorldEntry = true`, which unconditionally bypassed the cooldown system. The intro could never play on any entry that came through a loading screen — which is every login and most zone transitions.
+
+Fix:
+- Removed the unconditional intro skip for loading-screen arrivals
+- All supported-zone entries now queue the intro via `ShouldQueueMusicIntro()` and defer to `ShouldPlayMusicIntro()` for cooldown enforcement
+- The existing 10-minute SavedVariables-persisted cooldown (`MUSIC_INTRO_REPEAT_COOLDOWN = 600`) prevents spam across rapid relogs
+- The world-entry settle window no longer clears `musicIntroPending`, so the intro survives the brief startup purge delay
+
+Result: first login of the day → intro plays. Quick relog → cooldown blocks it, plays day/night track. Come back after 10+ minutes → intro plays again.
+
+### Misc
+
+- Added `.luarc.json` with WoW API global declarations for Lua language server (gitignored)
+- Updated `.gitignore` with `.luarc.json`
 
 ## Session Update (2026-03-12 - Silvermoon Interior Music and Documentation Pass)
 

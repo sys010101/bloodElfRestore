@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.0-alpha - 2026-03-18
+
+- Added `Debug.lua` with full [DebugChatFrame](https://github.com/kapresoft/wow-addon-debug-chat-frame) integration for optional live debug chat tab output.
+- Added global `c()` and `cp()` debug logging shortcuts with automatic fallback to `print()` when DebugChatFrame is not installed.
+- Added a 2000-line ring-buffer debug log capture in `BElfVRDB.debugLog` that persists across `/reload` and logout.
+- Added pre-init buffering so debug lines logged before `ADDON_LOADED` are not lost.
+- Added `/belr dumplog` command that opens a scrollable, copyable in-game window for extracting debug logs (`Ctrl+A`, `Ctrl+C`).
+- Added `/belr log clear` command to wipe the debug log buffer.
+- Added structured debug logging across all major event handlers (`ADDON_LOADED`, `PLAYER_LOGIN`, `PLAYER_ENTERING_WORLD`, `PLAYER_TARGET_CHANGED`, `GOSSIP_SHOW`, `GOSSIP_CLOSED`, zone changes, `PLAYER_LOGOUT`).
+- Bridged existing `Log()` and `LogMusic()` functions to also route through DebugChatFrame when available.
+- Added debug logging to key voice functions (`PlayRandomTBC`, `ApplyMutes`) and music functions (`EvaluateMusicState`).
+- Filtered `CVAR_UPDATE` debug logging to only capture `Sound_*` CVars, eliminating camera/perks/splash screen noise.
+- Suppressed periodic `EvaluateMusicState` heartbeat logging (fires every ~1s) to keep the debug log focused on meaningful state changes.
+- Fixed intro music never playing on login, reload, or zone entry because loading-screen arrivals unconditionally skipped the intro instead of deferring to the cooldown system.
+- Intro music now uses the existing 10-minute SavedVariables-persisted cooldown on all entries including loading-screen arrivals, so the intro plays after a long absence but stays quiet on rapid relogs.
+- Fixed the world-entry settle window clearing the intro pending flag, which prevented intro playback even when the cooldown had expired.
+- Added `.luarc.json` for Lua language server support (gitignored, not included in release).
+- Updated `README.md` with Debugging section, DebugChatFrame setup instructions, new commands, and corrected intro cooldown documentation.
+- Updated `DEV_NOTES.md` with Debug.lua documentation, session notes, and DebugChatFrame integration details.
+- Updated `CHANGELOG.md` and release metadata for `0.7.0-alpha`.
+
 ## 0.6.4-alpha - 2026-03-12
 
 - Added `silvermoon_interior` music region with dedicated GL_ScenicWalk TBC tracks (`53513`, `53514`, `53515`) for calm indoor ambience inside Silvermoon City buildings.
