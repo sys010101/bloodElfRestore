@@ -158,5 +158,4 @@ globals = {
     "AddMusicIntroCooldownBucket", "BuildMusicIntroCooldownBuckets",
     "ShouldPlayMusicIntro", "RememberMusicIntroPlayback",
     "GetConfiguredMusicIntroDefaultCooldown",
-```
 }
