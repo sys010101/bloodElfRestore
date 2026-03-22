@@ -1568,16 +1568,17 @@ local function GetMusicContext()
 
     if inMusicScope and not nativeOnly then
         regionKey = overrideRegionKey
-        if regionKey then
-            -- Explicit subzone override wins.
-        elseif patternRegionKey then
-            regionKey = patternRegionKey
-        elseif MUSIC_ZONE_REGION_OVERRIDES[zoneKey] then
-            regionKey = MUSIC_ZONE_REGION_OVERRIDES[zoneKey]
-        elseif supportedBySubZone then
-            regionKey = DEFAULT_SUPPORTED_SUBZONE_REGION
-        elseif supported and supportedByZone then
-            regionKey = NormalizeMusicRegionKey(zoneKey)
+        if not regionKey then
+            -- No explicit subzone override; fall through to other sources.
+            if patternRegionKey then
+                regionKey = patternRegionKey
+            elseif MUSIC_ZONE_REGION_OVERRIDES[zoneKey] then
+                regionKey = MUSIC_ZONE_REGION_OVERRIDES[zoneKey]
+            elseif supportedBySubZone then
+                regionKey = DEFAULT_SUPPORTED_SUBZONE_REGION
+            elseif supported and supportedByZone then
+                regionKey = NormalizeMusicRegionKey(zoneKey)
+            end
         end
     end
 
@@ -2210,7 +2211,7 @@ local function EvaluateMusicState(reason, forceTrackRefresh)
 
     local poolName
     local trackPool
-    local resolvedRegionKey = context.regionKey
+    local resolvedRegionKey
     local nextTrack
 
     if state.musicIntroPending then
