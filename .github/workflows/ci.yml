@@ -1,0 +1,87 @@
+name: bloodElfRestore CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ----------------------------------------------------------------
+  # Job 1: Lint
+  # luacheck reads Lua source and catches:
+  #   - syntax errors
+  #   - unused local variables
+  #   - typos in WoW API calls (e.g. MutSoundFile -> W113 undefined global)
+  #   - unreachable code
+  # ----------------------------------------------------------------
+  lint:
+    name: Lua Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install luacheck
+        run: sudo apt-get install -y luacheck
+
+      - name: Run luacheck
+        run: |
+          luacheck \
+            Config.lua \
+            Midnight_ID_catalog.lua \
+            SoundData.lua \
+            Debug.lua \
+            BElfRestore.lua
+
+  # ----------------------------------------------------------------
+  # Job 2: Package
+  # Runs only if lint passes.
+  # Produces a release-ready .zip matching the expected AddOns layout:
+  #   Interface/AddOns/bloodElfRestore/
+  # ----------------------------------------------------------------
+  package:
+    name: Package Addon
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release zip
+        run: |
+          ADDON_NAME="bloodElfRestore"
+          mkdir -p dist/$ADDON_NAME
+
+          # Runtime files loaded by WoW (order matches .toc)
+          cp bloodElfRestore.toc      dist/$ADDON_NAME/
+          cp Config.lua               dist/$ADDON_NAME/
+          cp Midnight_ID_catalog.lua  dist/$ADDON_NAME/
+          cp SoundData.lua            dist/$ADDON_NAME/
+          cp Debug.lua                dist/$ADDON_NAME/
+          cp BElfRestore.lua          dist/$ADDON_NAME/
+
+          # User-facing documentation
+          cp README.md    dist/$ADDON_NAME/
+          cp CHANGELOG.md dist/$ADDON_NAME/
+          cp LICENSE      dist/$ADDON_NAME/
+
+          # UI background art referenced in Config.lua
+          if [ -d assets ]; then
+            cp -r assets dist/$ADDON_NAME/
+          fi
+
+          # Intentionally excluded from the zip:
+          #   TBC_ID_CATALOG.lua  - authoring reference only, not loaded by WoW
+          #   tools/              - PowerShell catalog generators, not addon code
+          #   DEV_NOTES.md        - developer notes, not needed by end users
+          #   Midnight_ID_Index.md - human-readable catalog index, not needed at runtime
+          #   .github/            - CI configuration
+          #   .luacheckrc         - lint configuration
+
+          cd dist && zip -r ${ADDON_NAME}.zip ${ADDON_NAME}/
+
+      - name: Upload addon artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bloodElfRestore
+          path: dist/bloodElfRestore.zip
+          retention-days: 30
