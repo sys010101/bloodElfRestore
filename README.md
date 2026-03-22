@@ -1,5 +1,7 @@
 # Blood Elf Restore
 
+![bloodElfRestore CI](https://github.com/sys010101/bloodElfRestore/actions/workflows/ci.yml/badge.svg)
+
 Version: `0.7.0-alpha`
 
 ## Disclaimer
