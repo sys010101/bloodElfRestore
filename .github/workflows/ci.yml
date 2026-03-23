@@ -1,4 +1,4 @@
-name: bloodElfRestore CI
+name: bloodElfRestore CI/CD
 
 on:
   push:
